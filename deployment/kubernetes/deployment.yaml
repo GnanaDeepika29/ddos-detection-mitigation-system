@@ -277,7 +277,7 @@ spec:
         component: api
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
+        prometheus.io/port: "9091"
     spec:
       serviceAccountName: ddos-api-sa
       containers:
@@ -287,6 +287,9 @@ spec:
         ports:
         - name: http
           containerPort: 8000
+          protocol: TCP
+        - name: metrics
+          containerPort: 9091
           protocol: TCP
         env:
         - name: REDIS_HOST
