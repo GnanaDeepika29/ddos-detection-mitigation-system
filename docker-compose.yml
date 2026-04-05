@@ -1,0 +1,385 @@
+services:
+  # ==================== STREAMING & MESSAGE QUEUE ====================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: ddos-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: ddos-kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ==================== STATE MANAGEMENT & CACHING ====================
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: ddos-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ==================== TIME-SERIES DATABASE ====================
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: ddos-influxdb
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-changeme}
+      DOCKER_INFLUXDB_INIT_ORG: ddos
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-changeme-token}
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==================== MONITORING & METRICS ====================
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: ddos-prometheus
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./config/rules.prometheus.yml:/etc/prometheus/rules.prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: ddos-grafana
+    depends_on:
+      - prometheus
+      - influxdb
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel,grafana-worldmap-panel
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    volumes:
+      - ./config/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+      - ./config/grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml
+      - ./src/monitoring/grafana_dashboard.json:/var/lib/grafana/dashboards/ddos_dashboard.json
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+
+  # ==================== DETECTION & MITIGATION SERVICES ====================
+
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.collector
+    container_name: ddos-collector
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /app
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      COLLECTOR_INTERFACE: eth0
+      COLLECTOR_MODE: ${COLLECTOR_MODE:-synthetic}
+      COLLECTOR_SYNTHETIC_INTERVAL: ${COLLECTOR_SYNTHETIC_INTERVAL:-0.1}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  detector:
+    build:
+      context: .
+      dockerfile: Dockerfile.detector
+    container_name: ddos-detector
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_started
+    environment:
+      PYTHONPATH: /app
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme-token}
+      INFLUXDB_ORG: ddos
+      INFLUXDB_BUCKET: metrics
+      # Matches ./models:/app/models (see volumes); train with scripts/train_model.py -o models/isolation_forest.pkl
+      MODEL_PATH: /app/models/isolation_forest.pkl
+      ML_MODEL_PATH_ISOLATION_FOREST: /app/models/isolation_forest.pkl
+      DETECTION_WINDOW_SECONDS: 5
+      DETECTION_THRESHOLD_PPS: 10000
+      METRICS_PORT: "9091"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./scripts:/app/scripts
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  mitigation:
+    build:
+      context: .
+      dockerfile: Dockerfile.mitigation
+    container_name: ddos-mitigation
+    depends_on:
+      - redis
+      - detector
+    environment:
+      PYTHONPATH: /app
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AUTO_MITIGATE: ${AUTO_MITIGATE:-true}
+      CLOUD_PROVIDER: ${CLOUD_PROVIDER:-none}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID:-}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      METRICS_PORT: "8001"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./scripts:/app/scripts
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ddos-api
+    depends_on:
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /app
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./scripts:/app/scripts
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read()",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==================== ADDITIONAL SERVICES ====================
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: ddos-alertmanager
+    environment:
+      API_API_KEY: ${API_API_KEY:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      PAGERDUTY_INTEGRATION_KEY: ${PAGERDUTY_INTEGRATION_KEY:-}
+    volumes:
+      - ./config/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    # Host 9093 is used by Kafka (PLAINTEXT_HOST); expose Alertmanager UI on 9094
+    ports:
+      - "9094:9093"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--web.listen-address=:9093'
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: ddos-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      # Bind to localhost only — prevents access from outside the host in dev
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - ddos-network
+    restart: unless-stopped
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: ddos-logstash
+    volumes:
+      - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
+    ports:
+      - "5000:5000"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: ddos-kibana
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: elastic
+      ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD:-changeme}
+    ports:
+      - "5601:5601"
+    networks:
+      - ddos-network
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+
+  # ==================== TESTING & SIMULATION ====================
+
+  traffic-simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    container_name: ddos-simulator
+    depends_on:
+      - collector
+    environment:
+      TARGET_HOST: collector
+      TARGET_PORT: 80
+      ATTACK_TYPE: ${ATTACK_TYPE:-benign}
+      ATTACK_RATE: ${ATTACK_RATE:-1000}
+      SIMULATION_DURATION: ${SIMULATION_DURATION:-60}
+    networks:
+      - ddos-network
+    restart: "no"
+    profiles:
+      - test
+
+# ==================== NETWORKS ====================
+networks:
+  ddos-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ==================== VOLUMES ====================
+volumes:
+  redis-data:
+  influxdb-data:
+  prometheus-data:
+  grafana-data:
+  elasticsearch-data: 

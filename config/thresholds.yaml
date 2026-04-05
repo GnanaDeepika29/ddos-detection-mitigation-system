@@ -1,0 +1,169 @@
+# ============================================
+# DDoS DETECTION THRESHOLDS CONFIGURATION
+# ============================================
+
+version: "1.0.0"
+last_updated: "2024-01-15"
+
+baseline:
+  avg_packets_per_second: 5000
+  avg_bits_per_second: 50000000
+  avg_flows_per_second: 1000
+  avg_unique_src_ips_per_minute: 1000
+  avg_entropy_src_ip: 2.5
+  avg_tcp_ratio: 0.65
+  avg_udp_ratio: 0.30
+  avg_icmp_ratio: 0.05
+
+severity:
+  low:
+    multiplier: 2.0
+    color: "green"
+    notify: false
+    auto_mitigate: false
+  medium:
+    multiplier: 3.0
+    color: "yellow"
+    notify: true
+    auto_mitigate: false
+  high:
+    multiplier: 5.0
+    color: "orange"
+    notify: true
+    auto_mitigate: true
+  critical:
+    multiplier: 10.0
+    color: "red"
+    notify: true
+    auto_mitigate: true
+
+volumetric:
+  pps:
+    low: 10000
+    medium: 25000
+    high: 50000
+    critical: 100000
+    per_ip_low: 2000
+    per_ip_medium: 5000
+    per_ip_high: 10000
+    per_ip_critical: 25000
+    per_subnet_low: 5000
+    per_subnet_medium: 15000
+    per_subnet_high: 30000
+    per_subnet_critical: 75000
+  bps:
+    low: 100000000
+    medium: 500000000
+    high: 1000000000
+    critical: 5000000000
+    per_ip_low: 50000000
+    per_ip_medium: 100000000
+    per_ip_high: 500000000
+    per_ip_critical: 1000000000
+  fps:
+    low: 2000
+    medium: 5000
+    high: 10000
+    critical: 25000
+
+tcp:
+  syn_flood:
+    enabled: true
+    syn_ratio_low: 0.7
+    syn_ratio_medium: 0.8
+    syn_ratio_high: 0.9
+    syn_ratio_critical: 0.95
+    min_rate_low: 2000
+    min_rate_medium: 5000
+    min_rate_high: 10000
+    min_rate_critical: 25000
+    window_seconds: 5
+    actions:
+      low: ["log", "rate_limit"]
+      medium: ["rate_limit", "notify"]
+      high: ["block_ip", "notify", "cloud_shield"]
+      critical: ["block_subnet", "notify", "cloud_shield", "scrubber"]
+
+udp:
+  udp_flood:
+    enabled: true
+    udp_ratio_low: 0.6
+    udp_ratio_medium: 0.7
+    udp_ratio_high: 0.8
+    udp_ratio_critical: 0.9
+    min_rate_low: 5000
+    min_rate_medium: 10000
+    min_rate_high: 25000
+    min_rate_critical: 50000
+    window_seconds: 5
+    actions:
+      low: ["log"]
+      medium: ["rate_limit", "notify"]
+      high: ["rate_limit", "notify", "cloud_shield"]
+      critical: ["block_subnet", "notify", "cloud_shield", "scrubber"]
+
+icmp:
+  icmp_flood:
+    enabled: true
+    icmp_ratio_low: 0.4
+    icmp_ratio_medium: 0.5
+    icmp_ratio_high: 0.6
+    icmp_ratio_critical: 0.7
+    min_rate_low: 2000
+    min_rate_medium: 5000
+    min_rate_high: 10000
+    min_rate_critical: 25000
+    window_seconds: 5
+
+layer7:
+  http_flood:
+    enabled: true
+    requests_per_second_low: 500
+    requests_per_second_medium: 1000
+    requests_per_second_high: 2500
+    requests_per_second_critical: 5000
+    per_ip_low: 100
+    per_ip_medium: 250
+    per_ip_high: 500
+    per_ip_critical: 1000
+    window_seconds: 10
+    actions:
+      low: ["log", "rate_limit"]
+      medium: ["rate_limit", "notify", "captcha"]
+      high: ["block_ip", "notify", "cloud_shield"]
+      critical: ["block_ip", "notify", "cloud_shield", "scrubber"]
+
+entropy:
+  src_ip:
+    normal_range: [2.0, 5.0]
+    low_warning: 1.5
+    low_critical: 1.0
+    high_warning: 6.0
+    high_critical: 7.0
+    window_seconds: 10
+  dst_ip:
+    normal_range: [0.5, 3.0]
+    high_warning: 4.0
+    high_critical: 5.0
+    window_seconds: 10
+
+adaptive:
+  enabled: true
+  learning_window_hours: 24
+  update_interval_minutes: 60
+  confidence_intervals:
+    low: 1.0
+    medium: 2.0
+    high: 3.0
+  seasonality_periods: [24, 168]
+
+ml_thresholds:
+  isolation_forest:
+    anomaly_threshold: 0.5
+    contamination: 0.1
+  xgboost:
+    probability_threshold: 0.7
+    false_positive_rate_target: 0.01
+  lstm_autoencoder:
+    reconstruction_error_threshold: 0.15
+    window_size: 10

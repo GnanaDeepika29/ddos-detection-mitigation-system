@@ -1,0 +1,20 @@
+[Unit]
+Description=DDoS Protection System - Collector
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User={{ service_user }}
+Group={{ service_group }}
+WorkingDirectory={{ install_dir }}
+Environment="PATH={{ install_dir }}/venv/bin"
+Environment="PYTHONPATH={{ install_dir }}"
+ExecStart={{ install_dir }}/venv/bin/python {{ install_dir }}/scripts/run_collector.py --interface {{ collector_interface }}
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

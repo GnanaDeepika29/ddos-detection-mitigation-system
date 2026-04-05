@@ -1,0 +1,230 @@
+---
+# ============================================
+# DDoS Protection System - Kubernetes Services
+# ============================================
+
+# ============================================
+# API Service (LoadBalancer for external access)
+# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: ddos-api-service
+  namespace: ddos-system
+  labels:
+    app: ddos-api
+    service: api
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8000
+    protocol: TCP
+  selector:
+    app: ddos-api
+  sessionAffinity: ClientIP
+---
+# ============================================
+# Internal API Service (ClusterIP)
+# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: ddos-api-internal
+  namespace: ddos-system
+  labels:
+    app: ddos-api
+    service: api-internal
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  selector:
+    app: ddos-api
+---
+# ============================================
+# Collector Service removed: collector does not expose a stable TCP endpoint
+# ============================================
+---
+# ============================================
+# Detector Service removed: detector does not expose a stable TCP endpoint
+# ============================================
+---
+# ============================================
+# Prometheus Service
+# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: ddos-system
+  labels:
+    app: prometheus
+    service: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: prometheus
+---
+# ============================================
+# Grafana Service
+# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: ddos-system
+  labels:
+    app: grafana
+    service: monitoring
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 3000
+    targetPort: 3000
+    protocol: TCP
+  selector:
+    app: grafana
+---
+# ============================================
+# Redis Service
+# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-headless
+  namespace: ddos-system
+  labels:
+    app: redis
+    service: state
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: redis
+---
+# ============================================
+# Kafka Service
+# ============================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: ddos-system
+  labels:
+    app: kafka
+    service: streaming
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: kafka
+    port: 9092
+    targetPort: 9092
+    protocol: TCP
+  selector:
+    app: kafka
+---
+# ============================================
+# Ingress for API Gateway
+# ============================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ddos-api-ingress
+  namespace: ddos-system
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-burst: "200"
+spec:
+  tls:
+  - hosts:
+    - api.ddos-protection.example.com
+    secretName: ddos-api-tls
+  rules:
+  - host: api.ddos-protection.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ddos-api-service
+            port:
+              number: 80
+---
+# ============================================
+# Network Policy
+# ============================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ddos-network-policy
+  namespace: ddos-system
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ddos-system
+    ports:
+    - protocol: TCP
+      port: 8080
+    - protocol: TCP
+      port: 9091
+    - protocol: TCP
+      port: 9092
+    - protocol: TCP
+      port: 6379
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: ddos-system
+    ports:
+    - protocol: TCP
+      port: 9092   # Kafka
+    - protocol: TCP
+      port: 6379   # Redis
+    - protocol: TCP
+      port: 5432   # PostgreSQL
+    - protocol: TCP
+      port: 9200   # Elasticsearch
+    - protocol: TCP
+      port: 8080   # inter-service API calls
+    - protocol: TCP
+      port: 9091   # inter-service metrics
+  # Unrestricted HTTPS egress for cloud API calls
+  - ports:
+    - protocol: TCP
+      port: 443
+  # DNS
+  - ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53

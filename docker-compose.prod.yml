@@ -1,0 +1,27 @@
+# docker-compose.prod.yml
+version: '3.8'
+
+services:
+  api:
+    environment:
+      API_JWT_SECRET_KEY: ${API_JWT_SECRET_KEY}  # From host env, not .env
+    secrets:
+      - jwt_secret
+      - api_keys
+    entrypoint: |
+      sh -c 'export API_JWT_SECRET_KEY=$$(cat /run/secrets/jwt_secret) &&
+             export API_API_KEY=$$(cat /run/secrets/api_keys) &&
+             exec uvicorn src.api.main:app --host 0.0.0.0 --port 8000'
+
+  alertmanager:
+    secrets:
+      - api_keys
+    entrypoint: |
+      sh -c 'export API_API_KEY=$$(cat /run/secrets/api_keys) &&
+             exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --web.listen-address=:9093'
+
+secrets:
+  jwt_secret:
+    external: true  # Managed by Docker Swarm/K8s
+  api_keys:
+    external: true

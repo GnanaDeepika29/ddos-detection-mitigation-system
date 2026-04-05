@@ -1,0 +1,32 @@
+# docker-compose.tls.yml
+version: '3.8'
+
+services:
+  zookeeper:
+    environment:
+      ZOO_SSL_ENABLED: "true"
+      ZOO_SSL_KEYSTORE_LOCATION: "/certs/zookeeper.keystore.jks"
+      ZOO_SSL_TRUSTSTORE_LOCATION: "/certs/zookeeper.truststore.jks"
+    volumes:
+      - ./certs:/certs:ro
+
+  kafka:
+    environment:
+      KAFKA_SSL_KEYSTORE_FILENAME: kafka.keystore.jks
+      KAFKA_SSL_TRUSTSTORE_FILENAME: kafka.truststore.jks
+      KAFKA_SSL_KEY_CREDENTIALS: ssl_credentials
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: ssl_credentials
+      KAFKA_SECURITY_INTER_BROKER_PROTOCOL: SSL
+      KAFKA_SSL_CLIENT_AUTH: required
+      KAFKA_SSL_ENABLED_PROTOCOLS: TLSv1.3,TLSv1.2
+    volumes:
+      - ./certs:/etc/kafka/secrets:ro
+
+  redis:
+    command: redis-server --tls-port 6379 --port 0 \
+      --tls-cert-file /certs/redis.crt \
+      --tls-key-file /certs/redis.key \
+      --tls-ca-cert-file /certs/ca.crt \
+      --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - ./certs:/certs:ro

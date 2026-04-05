@@ -1,0 +1,22 @@
+[Unit]
+Description=DDoS Protection System - Detector
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User={{ service_user }}
+Group={{ service_group }}
+WorkingDirectory={{ install_dir }}
+Environment="PATH={{ install_dir }}/venv/bin"
+Environment="PYTHONPATH={{ install_dir }}"
+Environment="MODEL_PATH={{ install_dir }}/models/isolation_forest.pkl"
+Environment="ML_MODEL_PATH_ISOLATION_FOREST={{ install_dir }}/models/isolation_forest.pkl"
+ExecStart={{ install_dir }}/venv/bin/python {{ install_dir }}/scripts/run_detector.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

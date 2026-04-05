@@ -1,0 +1,56 @@
+# ============================================
+# Prometheus Configuration
+# ============================================
+
+global:
+  scrape_interval: 10s
+  evaluation_interval: 15s
+  external_labels:
+    environment: production
+    service: ddos-protection
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+      scheme: http
+      timeout: 10s
+      api_version: v2
+
+rule_files:
+  - 'rules.prometheus.yml'
+
+scrape_configs:
+  - job_name: 'ddos-detector'
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    static_configs:
+      - targets: ['detector:9091']
+        labels:
+          service: detector
+          component: detection
+
+  - job_name: 'ddos-mitigation'
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    static_configs:
+      - targets: ['mitigation:8001']
+        labels:
+          service: mitigation
+          component: response
+
+  - job_name: 'ddos-collector'
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    static_configs:
+      - targets: ['collector:9091']
+        labels:
+          service: collector
+          component: ingestion
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: prometheus
+          component: monitoring

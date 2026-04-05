@@ -1,0 +1,263 @@
+# ============================================
+# DDoS PROTECTION SYSTEM - DEVELOPMENT CONFIGURATION
+# ============================================
+
+app:
+  name: "ddos-protection-system"
+  version: "1.0.0"
+  environment: "development"
+  debug: true
+  host: "0.0.0.0"
+  port: 8000
+  workers: 1
+  reload: true
+  log_level: "DEBUG"
+  log_format: "console"
+  log_file: "logs/dev/ddos_system.log"
+  max_queue_size: 10000
+  worker_threads: 2
+  enable_profiling: true
+
+collector:
+  enabled: true
+  interface: "eth0"
+  promiscuous: false
+  snaplen: 1518
+  filter_bpf: ""
+  buffer_size_mb: 32
+  flow_idle_timeout: 30
+  flow_active_timeout: 60
+  max_flows: 10000
+  test_pcap_path: "data/samples/test_traffic.pcap"
+  replay_speed: 1.0
+
+cloud_agent:
+  enabled: false
+  provider: "none"
+  poll_interval_seconds: 30
+  aws:
+    region: "us-east-1"
+    vpc_ids: []
+    log_group_names: []
+  azure:
+    subscription_id: ""
+    resource_group: ""
+  gcp:
+    project_id: ""
+    subscription_name: ""
+
+kafka:
+  enabled: true
+  bootstrap_servers: "localhost:9092"
+  topics:
+    flows: "network_flows_dev"
+    alerts: "ddos_alerts_dev"
+    metrics: "detection_metrics_dev"
+    mitigation: "mitigation_events_dev"
+  producer:
+    client_id: "ddos-producer-dev"
+    batch_size: 8192
+    linger_ms: 5
+    compression: "none"
+    acks: 1
+    retries: 1
+  consumer:
+    group_id: "ddos-detection-group-dev"
+    auto_offset_reset: "earliest"
+    enable_auto_commit: true
+    max_poll_records: 100
+
+redis:
+  enabled: true
+  host: "localhost"
+  port: 6379
+  password: ""
+  db: 0
+  max_connections: 10
+  socket_timeout: 5
+  rate_limit_enabled: true
+  rate_limit_default_pps: 1000
+  rate_limit_burst: 2000
+
+detection:
+  enabled: true
+  mode: "hybrid"
+  window_sizes: [1, 5, 10]
+  feature_extractor:
+    max_flows_per_window: 5000
+    enable_tcp_flags: true
+    enable_payload_analysis: false
+    enable_dns_features: false
+  threshold:
+    packets_per_second_threshold: 50000
+    bytes_per_second_threshold: 50000000
+    flows_per_second_threshold: 10000
+    packets_per_second_per_ip: 10000
+    connections_per_second_per_ip: 2000
+    entropy_src_ip_threshold: 0.6
+    entropy_dst_ip_threshold: 0.6
+    syn_flood_syn_ratio: 0.8
+    syn_flood_min_rate: 5000
+    udp_flood_ratio: 0.7
+    udp_flood_min_rate: 10000
+    icmp_flood_ratio: 0.5
+    icmp_flood_min_rate: 5000
+    http_flood_requests_per_second: 2000
+    enable_dynamic_thresholds: false
+    dynamic_window_size: 30
+    dynamic_threshold_multiplier: 2.0
+    alert_cooldown_seconds: 10
+  ml:
+    enabled: false
+    model_type: "isolation_forest"
+    model_path: "models/dev_isolation_forest.pkl"
+    anomaly_threshold: 0.5
+    confidence_threshold: 0.6
+    batch_size: 16
+    use_gpu: false
+    enable_online_learning: false
+  ensemble:
+    voting_strategy: "weighted"
+    threshold_weight: 0.5
+    ml_weight: 0.3
+    entropy_weight: 0.2
+    min_confidence: 0.6
+    min_agreeing_detectors: 2
+    cascade_threshold_first: false
+
+mitigation:
+  enabled: true
+  auto_mitigate: false
+  dry_run: true
+  rule_injector:
+    enabled: true
+    firewall_type: "auto"
+    default_chain: "INPUT"
+    default_ttl_seconds: 300
+    max_rules: 100
+    require_sudo: false
+  cloud_shield:
+    enabled: false
+    provider: "none"
+    auto_enable: false
+  scrubber:
+    enabled: false
+  rate_limiter:
+    enabled: true
+    default_packet_rate: 1000
+    default_byte_rate: 1048576
+    default_connection_rate: 100
+    default_burst_multiplier: 2.0
+    max_rules: 1000
+    use_sliding_window: false
+
+monitoring:
+  enabled: true
+  metrics:
+    enabled: true
+    port: 9090
+    endpoint: "/metrics"
+    namespace: "ddos_protection"
+    subsystem: "detection"
+    collection_interval_seconds: 15
+    enable_detection_metrics: true
+    enable_traffic_metrics: true
+    enable_mitigation_metrics: true
+    enable_system_metrics: true
+  grafana:
+    enabled: true
+    url: "http://localhost:3000"
+    dashboard_uid: "ddos-protection-dev"
+  influxdb:
+    enabled: false
+    url: "http://localhost:8086"
+    org: "ddos_dev"
+    bucket: "metrics_dev"
+    token: ""
+
+alerts:
+  enabled: true
+  alert_manager:
+    deduplication_window_seconds: 30
+    max_alerts_per_minute: 50
+    min_severity: "low"
+    auto_resolve_seconds: 300
+  slack:
+    enabled: false
+    webhook_url: ""
+  pagerduty:
+    enabled: false
+    integration_key: ""
+  email:
+    enabled: false
+    smtp_host: "localhost"
+    smtp_port: 1025
+    from_email: "ddos-dev@localhost"
+    to_emails: ["dev@localhost"]
+  webhook:
+    enabled: false
+    url: "http://localhost:8080/webhook"
+
+database:
+  enabled: false
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "ddos_dev"
+    user: "ddos_user"
+    password: "dev_password"
+    ssl_mode: "disable"
+    pool_size: 5
+  elasticsearch:
+    enabled: false
+    hosts: ["http://localhost:9200"]
+    index_prefix: "ddos-logs-dev-"
+
+simulation:
+  enabled: false
+  traffic_simulator:
+    enabled: false
+    target_host: "collector"
+    target_port: 80
+    attack_type: "benign"
+    attack_rate: 1000
+    duration_seconds: 30
+    threads: 2
+  mock_data:
+    enabled: true
+    flows_per_second: 100
+    attack_probability: 0.05
+    max_src_ips: 100
+    max_dst_ips: 10
+
+health:
+  enabled: true
+  endpoint: "/health"
+  interval_seconds: 30
+  timeout_seconds: 5
+  dependencies:
+    kafka: true
+    redis: true
+    influxdb: false
+
+features:
+  use_mock_kafka: false
+  enable_trace_logging: true
+  enable_request_logging: true
+  enable_circuit_breaker: false
+  enable_retry_with_backoff: true
+
+security:
+  api_auth_enabled: false
+  api_key: "dev-api-key"
+  jwt_secret: "${JWT_SECRET:dev-only-UNSAFE-do-not-use-in-prod}"
+  tls_enabled: false
+
+dev_overrides:
+  artificial_latency_ms: 0
+  error_injection_rate: 0.0
+  print_flows: false
+  print_alerts: true
+  data_dir: "data/dev"
+  model_dir: "models/dev"
+  log_dir: "logs/dev"

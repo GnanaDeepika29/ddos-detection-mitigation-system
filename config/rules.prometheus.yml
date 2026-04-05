@@ -1,0 +1,103 @@
+# ============================================
+# Prometheus Alerting Rules
+# ============================================
+
+groups:
+  - name: ddos_attacks
+    interval: 30s
+    rules:
+      - alert: HighPacketRate
+        expr: max_over_time(ddos_protection_detection_packets_per_second{direction="total"}[1m]) > 50000
+        for: 30s
+        labels:
+          severity: high
+          service: ddos-protection
+        annotations:
+          summary: "High packet rate detected"
+          description: "Packet rate is {{ $value }} pps, exceeding threshold of 50000 pps"
+
+      - alert: CriticalPacketRate
+        expr: max_over_time(ddos_protection_detection_packets_per_second{direction="total"}[1m]) > 100000
+        for: 15s
+        labels:
+          severity: critical
+          service: ddos-protection
+        annotations:
+          summary: "Critical packet rate detected"
+          description: "Packet rate is {{ $value }} pps, exceeding critical threshold"
+
+      - alert: LowEntropyDetected
+        expr: ddos_protection_detection_entropy_src_ip < 0.5
+        for: 1m
+        labels:
+          severity: medium
+          service: ddos-protection
+        annotations:
+          summary: "Low source IP entropy detected"
+          description: "Source IP entropy is {{ $value }}, possible DDoS attack"
+
+      - alert: HighDetectionConfidence
+        expr: ddos_protection_detection_detection_confidence > 0.9
+        for: 10s
+        labels:
+          severity: high
+          service: ddos-protection
+        annotations:
+          summary: "High confidence DDoS detection"
+          description: "Detection confidence is {{ $value }}%"
+
+  - name: system_health
+    interval: 30s
+    rules:
+      - alert: KafkaConsumerLagHigh
+        expr: ddos_protection_detection_kafka_consumer_lag > 10000
+        for: 1m
+        labels:
+          severity: warning
+          service: kafka
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Consumer lag is {{ $value }} messages"
+
+      - alert: HighCPUUsage
+        expr: ddos_protection_detection_cpu_usage_percent{core="total"} > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: ddos_protection_detection_memory_usage_bytes{type="process_rss"} / 1024 / 1024 > 6000
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }} MB"
+
+  - name: mitigation
+    interval: 30s
+    rules:
+      - alert: ActiveMitigationRules
+        expr: ddos_protection_detection_active_rules{rule_type="all"} > 100
+        for: 1m
+        labels:
+          severity: warning
+          service: mitigation
+        annotations:
+          summary: "High number of active mitigation rules"
+          description: "Active rules count is {{ $value }}"
+
+      - alert: RateLimitingActive
+        expr: rate(ddos_protection_detection_rate_limited_packets_total[1m]) > 1000
+        for: 1m
+        labels:
+          severity: info
+          service: mitigation
+        annotations:
+          summary: "Rate limiting active"
+          description: "Rate limiting {{ $value }} packets per second"

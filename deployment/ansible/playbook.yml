@@ -1,0 +1,356 @@
+---
+# ============================================
+# Ansible Playbook for DDoS Protection System
+# ============================================
+
+- name: Deploy DDoS Protection System
+  hosts: all
+  become: yes
+  vars:
+    app_version: "1.0.0"
+    kafka_version: "3.5.0"
+    redis_version: "7.0"
+
+    install_dir: "/opt/ddos-system"
+    data_dir:    "/var/lib/ddos-system"
+    log_dir:     "/var/log/ddos-system"
+    config_dir:  "/etc/ddos-system"
+
+    service_user:  "ddos"
+    service_group: "ddos"
+
+    collector_interface: "eth0"
+    api_port:     8000
+    metrics_port: 8000
+
+    kafka_brokers:      "localhost:9092"
+    kafka_topic_flows:  "network_flows_prod"
+    kafka_topic_alerts: "ddos_alerts_prod"
+
+    redis_host: "localhost"
+    redis_port: 6379
+
+    cloud_provider: "none"
+
+    enable_tls:    false
+    tls_cert_path: ""
+    tls_key_path:  ""
+
+    expected_model_sha256: ""   # set in group_vars or vault before running
+
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+
+    - name: Install required system packages
+      package:
+        name:
+          - python3-pip
+          - python3-venv
+          - git
+          - build-essential
+          - libpcap-dev
+          - tcpdump
+          - iptables
+          - nftables
+        state: present
+
+    - name: Create service user
+      user:
+        name:        "{{ service_user }}"
+        system:      yes
+        shell:       /bin/false
+        home:        "{{ install_dir }}"
+        create_home: yes
+
+    - name: Create required directories
+      file:
+        path:  "{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        group: "{{ service_group }}"
+        mode:  "0755"
+      loop:
+        - "{{ install_dir }}"
+        - "{{ data_dir }}"
+        - "{{ log_dir }}"
+        - "{{ config_dir }}"
+        - "{{ install_dir }}/src"
+        - "{{ install_dir }}/scripts"
+        - "{{ install_dir }}/models"
+
+    - name: Copy application files
+      synchronize:
+        src:  "../../"
+        dest: "{{ install_dir }}/"
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+          - "--exclude=logs"
+          - "--exclude=data"
+      delegate_to: localhost
+
+  tasks:
+    - name: Set up Python virtual environment
+      pip:
+        requirements:      "{{ install_dir }}/requirements.txt"
+        virtualenv:        "{{ install_dir }}/venv"
+        virtualenv_python: python3
+
+    - name: Configure application
+      template:
+        src:   config.yaml.j2
+        dest:  "{{ config_dir }}/config.yaml"
+        owner: "{{ service_user }}"
+        group: "{{ service_group }}"
+        mode:  "0644"
+
+    - name: Create systemd service for collector
+      template:
+        src:  ddos-collector.service.j2
+        dest: /etc/systemd/system/ddos-collector.service
+        mode: "0644"
+      notify: restart collector
+
+    - name: Create systemd service for detector
+      template:
+        src:  ddos-detector.service.j2
+        dest: /etc/systemd/system/ddos-detector.service
+        mode: "0644"
+      notify: restart detector
+
+    - name: Create systemd service for mitigation
+      template:
+        src:  ddos-mitigation.service.j2
+        dest: /etc/systemd/system/ddos-mitigation.service
+        mode: "0644"
+      notify: restart mitigation
+
+    - name: Create systemd service for API
+      template:
+        src:  ddos-api.service.j2
+        dest: /etc/systemd/system/ddos-api.service
+        mode: "0644"
+      notify: restart api
+
+    - name: Create logrotate configuration
+      template:
+        src:  logrotate.conf.j2
+        dest: /etc/logrotate.d/ddos-system
+        mode: "0644"
+
+    - name: Download pre-trained model
+      get_url:
+        url:      "https://models.ddos-system.com/ddos_detection_model.pkl"
+        dest:     "{{ install_dir }}/models/isolation_forest.pkl"
+        checksum: "sha256:{{ expected_model_sha256 }}"
+        owner:    "{{ service_user }}"
+        group:    "{{ service_group }}"
+        mode:     "0644"
+
+    - name: Set file permissions
+      file:
+        path:    "{{ install_dir }}"
+        owner:   "{{ service_user }}"
+        group:   "{{ service_group }}"
+        recurse: yes
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start services
+      systemd:
+        name:    "{{ item }}"
+        enabled: yes
+        state:   started
+      loop:
+        - ddos-collector
+        - ddos-detector
+        - ddos-mitigation
+        - ddos-api
+
+    - name: Configure firewall rules
+      iptables:
+        chain:            INPUT
+        protocol:         tcp
+        destination_port: "{{ item }}"
+        jump:             ACCEPT
+        comment:          "DDoS system - allow port {{ item }}"
+      loop:
+        - "{{ api_port }}"       # 8080 — REST API
+        - "{{ metrics_port }}"   # 8000 — Prometheus scrape
+
+  handlers:
+    - name: restart collector
+      systemd:
+        name:  ddos-collector
+        state: restarted
+
+    - name: restart detector
+      systemd:
+        name:  ddos-detector
+        state: restarted
+
+    - name: restart mitigation
+      systemd:
+        name:  ddos-mitigation
+        state: restarted
+
+    - name: restart api
+      systemd:
+        name:  ddos-api
+        state: restarted
+
+  post_tasks:
+    - name: Verify services are running
+      systemd:
+        name:  "{{ item }}"
+        state: started
+      loop:
+        - ddos-collector
+        - ddos-detector
+        - ddos-mitigation
+        - ddos-api
+
+    - name: Check API health endpoint
+      uri:
+        url:         "http://localhost:{{ api_port }}/health"
+        status_code: 200
+      register: health_check
+      retries:  30
+      delay:    2
+      until:    health_check.status == 200
+
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=========================================="
+          - "DDoS Protection System Deployed Successfully"
+          - "=========================================="
+          - "API URL: http://{{ ansible_default_ipv4.address }}:{{ api_port }}"
+          - "Metrics URL: http://{{ ansible_default_ipv4.address }}:{{ metrics_port }}/metrics"
+          - "Log Directory: {{ log_dir }}"
+          - "Data Directory: {{ data_dir }}"
+          - "=========================================="
+
+# ============================================
+# Configuration Templates
+# ============================================
+- name: Generate configuration templates
+  hosts: localhost
+  gather_facts: no
+  vars:
+    service_user:  "ddos"
+    service_group: "ddos"
+    install_dir:   "/opt/ddos-system"
+    config_dir:    "/etc/ddos-system"
+    log_dir:       "/var/log/ddos-system"
+    api_port:      8000
+    metrics_port:  8000
+    kafka_brokers: "localhost:9092"
+    kafka_topic_flows:  "network_flows_prod"
+    kafka_topic_alerts: "ddos_alerts_prod"
+    redis_host:    "localhost"
+    redis_port:    6379
+    cloud_provider: "none"
+    enable_tls:    false
+    tls_cert_path: ""
+    tls_key_path:  ""
+
+  tasks:
+    - name: Create config.yaml.j2 template
+      copy:
+        dest: ./config.yaml.j2
+        content: |
+          app:
+            name: "ddos-protection-system"
+            version: "{{ app_version | default('1.0.0') }}"
+            environment: "{{ environment | default('production') }}"
+            debug: false
+            host: "0.0.0.0"
+            port: {{ api_port }}
+            log_level: "INFO"
+
+          kafka:
+            bootstrap_servers: "{{ kafka_brokers }}"
+            topics:
+              flows: "{{ kafka_topic_flows }}"
+              alerts: "{{ kafka_topic_alerts }}"
+
+          redis:
+            host: "{{ redis_host }}"
+            port: {{ redis_port }}
+            db: 0
+
+          detection:
+            window_sizes: [1, 5, 10, 60]
+            mode: "ensemble"
+            threshold:
+              packets_per_second_threshold: 10000
+              entropy_src_ip_threshold: 0.7
+
+          mitigation:
+            auto_mitigate: true
+            dry_run: false
+            cloud_provider: "{{ cloud_provider }}"
+
+          monitoring:
+            metrics_enabled: true
+            metrics_port: {{ metrics_port }}
+
+          security:
+            tls_enabled: {{ enable_tls | lower }}
+            tls_cert_path: "{{ tls_cert_path }}"
+            tls_key_path: "{{ tls_key_path }}"
+
+    - name: Create systemd service templates
+      copy:
+        dest: "{{ item }}"
+        content: |
+          [Unit]
+          Description=DDoS Protection System - {{ item | regex_replace('.service.j2$', '') | replace('ddos-', '') | capitalize }}
+          After=network.target
+          Wants=network.target
+
+          [Service]
+          Type=simple
+          User={{ service_user }}
+          Group={{ service_group }}
+          WorkingDirectory={{ install_dir }}
+          Environment="PATH={{ install_dir }}/venv/bin"
+          ExecStart={{ install_dir }}/venv/bin/python {{ install_dir }}/src/{{ item | regex_replace('.service.j2$', '') | replace('ddos-', '') }}/main.py --config {{ config_dir }}/config.yaml
+          Restart=on-failure
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+
+          [Install]
+          WantedBy=multi-user.target
+      loop:
+        - ddos-collector.service.j2
+        - ddos-detector.service.j2
+        - ddos-mitigation.service.j2
+        - ddos-api.service.j2
+
+    - name: Create logrotate template
+      copy:
+        dest: ./logrotate.conf.j2
+        content: |
+          {{ log_dir }}/*.log {
+              daily
+              rotate 30
+              compress
+              delaycompress
+              missingok
+              notifempty
+              create 0640 {{ service_user }} {{ service_group }}
+              sharedscripts
+              postrotate
+                  systemctl kill -s USR1 ddos-collector ddos-detector ddos-mitigation ddos-api >/dev/null 2>&1 || true
+              endscript
+          }

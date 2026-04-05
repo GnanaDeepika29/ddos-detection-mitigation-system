@@ -1,0 +1,467 @@
+---
+# ============================================
+# DDoS Protection System - Kubernetes Deployment
+# ============================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ddos-system
+  labels:
+    name: ddos-system
+    environment: production
+---
+# ============================================
+# Traffic Collector Deployment
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddos-collector
+  namespace: ddos-system
+  labels:
+    app: ddos-collector
+    component: collector
+    tier: ingestion
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ddos-collector
+  template:
+    metadata:
+      labels:
+        app: ddos-collector
+        component: collector
+    spec:
+      serviceAccountName: ddos-collector-sa
+      containers:
+      - name: collector
+        image: ddos-system/collector:1.0.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - "--interface=eth0"
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: KAFKA_TOPIC_FLOWS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_TOPIC_FLOWS
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ddos
+        - name: data
+          mountPath: /data
+        securityContext:
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+      volumes:
+      - name: config
+        configMap:
+          name: ddos-app-config
+      - name: data
+        persistentVolumeClaim:
+          claimName: ddos-collector-pvc
+      nodeSelector:
+        node-type: network
+      tolerations:
+      - key: "network"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+---
+# ============================================
+# Detector Deployment (Kafka Consumer)
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddos-detector
+  namespace: ddos-system
+  labels:
+    app: ddos-detector
+    component: detector
+    tier: processing
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ddos-detector
+  template:
+    metadata:
+      labels:
+        app: ddos-detector
+        component: detector
+    spec:
+      serviceAccountName: ddos-detector-sa
+      containers:
+      - name: detector
+        image: ddos-system/detector:1.0.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: KAFKA_TOPIC_FLOWS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_TOPIC_FLOWS
+        - name: KAFKA_TOPIC_ALERTS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_TOPIC_ALERTS
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: REDIS_HOST
+        - name: MODEL_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: ML_MODEL_PATH_ISOLATION_FOREST
+        - name: ML_MODEL_PATH_ISOLATION_FOREST
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: ML_MODEL_PATH_ISOLATION_FOREST
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "8Gi"
+            cpu: "4000m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ddos
+        - name: models
+          mountPath: /models
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: config
+        configMap:
+          name: ddos-app-config
+      - name: models
+        persistentVolumeClaim:
+          claimName: ddos-models-pvc
+      - name: data
+        persistentVolumeClaim:
+          claimName: ddos-detector-pvc
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ddos-detector
+              topologyKey: kubernetes.io/hostname
+---
+# ============================================
+# Mitigation Engine Deployment
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddos-mitigation
+  namespace: ddos-system
+  labels:
+    app: ddos-mitigation
+    component: mitigation
+    tier: action
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ddos-mitigation
+  template:
+    metadata:
+      labels:
+        app: ddos-mitigation
+        component: mitigation
+    spec:
+      serviceAccountName: ddos-mitigation-sa
+      containers:
+      - name: mitigation
+        image: ddos-system/mitigation:1.0.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: REDIS_HOST
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: KAFKA_TOPIC_ALERTS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_TOPIC_ALERTS
+        - name: CLOUD_PROVIDER
+          value: "aws"
+        - name: AWS_REGION
+          value: "us-east-1"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ddos
+        securityContext:
+          privileged: false
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+      volumes:
+      - name: config
+        configMap:
+          name: ddos-app-config
+      nodeSelector:
+        node-type: mitigation
+---
+# ============================================
+# API Server Deployment
+# ============================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddos-api
+  namespace: ddos-system
+  labels:
+    app: ddos-api
+    component: api
+    tier: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ddos-api
+  template:
+    metadata:
+      labels:
+        app: ddos-api
+        component: api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+    spec:
+      serviceAccountName: ddos-api-sa
+      containers:
+      - name: api
+        image: ddos-system/api:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+          protocol: TCP
+        env:
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: REDIS_HOST
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: KAFKA_BOOTSTRAP_SERVERS
+        - name: API_PORT
+          value: "8000"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/ddos
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: ddos-app-config
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ddos-api
+              topologyKey: kubernetes.io/hostname
+---
+# ============================================
+# Horizontal Pod Autoscaler for Detector
+# ============================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ddos-detector-hpa
+  namespace: ddos-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ddos-detector
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+# ============================================
+# Persistent Volume Claims
+# ============================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ddos-collector-pvc
+  namespace: ddos-system
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: shared-storage
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ddos-detector-pvc
+  namespace: ddos-system
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ddos-models-pvc
+  namespace: ddos-system
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: shared-storage
+---
+# ============================================
+# Service Accounts
+# ============================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ddos-collector-sa
+  namespace: ddos-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ddos-detector-sa
+  namespace: ddos-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ddos-mitigation-sa
+  namespace: ddos-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ddos-api-sa
+  namespace: ddos-system
+---
+# ============================================
+# RBAC
+# ============================================
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ddos-mitigation-role
+rules:
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ddos-mitigation-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ddos-mitigation-role
+subjects:
+- kind: ServiceAccount
+  name: ddos-mitigation-sa
+  namespace: ddos-system

@@ -1,0 +1,30 @@
+FROM python:3.11-slim AS detector
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libpcap-dev \
+    tcpdump \
+    iptables \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Create necessary directories
+RUN mkdir -p /app/logs /app/data /app/models
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\n\
+python scripts/run_detector.py "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD []

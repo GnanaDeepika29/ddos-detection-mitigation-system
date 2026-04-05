@@ -1,0 +1,272 @@
+---
+# ============================================
+# DDoS Protection System - ConfigMaps
+# ============================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ddos-app-config
+  namespace: ddos-system
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-headless.ddos-system:9092"
+  KAFKA_TOPIC_FLOWS: "network_flows_prod"
+  KAFKA_TOPIC_ALERTS: "ddos_alerts_prod"
+  REDIS_HOST: "redis-headless.ddos-system"
+  ML_MODEL_PATH_ISOLATION_FOREST: "/models/isolation_forest.pkl"
+  app.yaml: |
+    app:
+      name: "ddos-protection-system"
+      version: "1.0.0"
+      environment: "production"
+      debug: false
+      host: "0.0.0.0"
+      port: 8080
+      workers: 4
+      log_level: "INFO"
+      log_format: "json"
+
+    kafka:
+      bootstrap_servers: "kafka-headless.ddos-system:9092"
+      topics:
+        flows: "network_flows_prod"
+        alerts: "ddos_alerts_prod"
+        metrics: "detection_metrics_prod"
+        mitigation: "mitigation_events_prod"
+      consumer_group: "ddos-detection-group-prod"
+
+    redis:
+      host: "redis-headless.ddos-system"
+      port: 6379
+      db: 0
+      max_connections: 100
+
+    detection:
+      window_sizes: [1, 5, 10, 60]
+      mode: "ensemble"
+      threshold:
+        packets_per_second_threshold: 10000
+        bytes_per_second_threshold: 100000000
+        entropy_src_ip_threshold: 0.7
+        syn_flood_syn_ratio: 0.8
+
+    mitigation:
+      auto_mitigate: true
+      dry_run: false
+      rate_limit_default_pps: 1000
+
+    monitoring:
+      metrics_enabled: true
+      metrics_port: 9091
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: ddos-system
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 10s
+      evaluation_interval: 15s
+      external_labels:
+        environment: production
+        cluster: ddos-system
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
+
+    rule_files:
+      - '/etc/prometheus/alerts/*.yml'
+
+    scrape_configs:
+      - job_name: 'ddos-collector'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: ddos-collector
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+      - job_name: 'ddos-detector'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: ddos-detector
+
+      - job_name: 'ddos-api'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: ddos-api
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alerts
+  namespace: ddos-system
+data:
+  ddos_alerts.yml: |
+    groups:
+      - name: ddos_detection
+        interval: 30s
+        rules:
+          - alert: HighPacketRate
+            expr: max_over_time(ddos_protection_detection_packets_per_second[1m]) > 50000
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "High packet rate detected"
+              description: "Packet rate is {{ $value }} pps"
+
+          - alert: LowEntropy
+            expr: ddos_protection_detection_entropy_src_ip < 1.5
+            for: 2m
+            labels:
+              severity: high
+            annotations:
+              summary: "Low source IP entropy detected"
+              description: "Entropy is {{ $value }} - possible DDoS attack"
+
+          - alert: KafkaConsumerLag
+            expr: ddos_protection_detection_kafka_consumer_lag > 10000
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High Kafka consumer lag"
+              description: "Consumer lag is {{ $value }}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: ddos-system
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+
+      - name: InfluxDB
+        type: influxdb
+        access: proxy
+        url: http://influxdb:8086
+        database: ddos_metrics
+        editable: false
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: ddos-system
+data:
+  ddos-dashboard.json: |
+    {
+      "dashboard": {
+        "title": "DDoS Protection System",
+        "tags": ["ddos", "security"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Packets Per Second",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "ddos_protection_detection_packets_per_second",
+                "legendFormat": "PPS"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluent-bit-config
+  namespace: ddos-system
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush        1
+        Log_Level    info
+        Parsers_File parsers.conf
+
+    [INPUT]
+        Name              tail
+        Path              /var/log/containers/*.log
+        Parser            docker
+        Tag               kube.*
+        Mem_Buf_Limit     50MB
+
+    [FILTER]
+        Name                kubernetes
+        Match               kube.*
+        Kube_URL            https://kubernetes.default.svc:443
+        Merge_Log           On
+
+    [FILTER]
+        Name                grep
+        Match               *
+        Regex               log.*ddos
+
+    [OUTPUT]
+        Name                elasticsearch
+        Match               *
+        Host                elasticsearch.ddos-system
+        Port                9200
+        Index               ddos-logs
+        Suppress_Type_Name  On
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-rate-limit
+  namespace: ddos-system
+data:
+  rate-limit-config.yaml: |
+    domain: ddos-api
+    descriptors:
+      - key: remote_address
+        rate_limit:
+          unit: second
+          requests_per_unit: 100
+      - key: path
+        rate_limit:
+          unit: minute
+          requests_per_unit: 1000
+        descriptors:
+          - key: path
+            value: /api/v1/detect
+            rate_limit:
+              unit: second
+              requests_per_unit: 10

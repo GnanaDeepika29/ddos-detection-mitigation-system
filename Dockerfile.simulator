@@ -1,0 +1,25 @@
+FROM python:3.11-slim AS simulator
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libpcap-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\n\
+python scripts/simulate_traffic.py "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["--target=collector", "--attack=benign"]

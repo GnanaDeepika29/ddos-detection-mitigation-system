@@ -1,0 +1,374 @@
+# ============================================
+# DDoS PROTECTION SYSTEM - PRODUCTION CONFIGURATION
+# ============================================
+
+app:
+  name: "ddos-protection-system"
+  version: "1.0.0"
+  environment: "production"
+  debug: false
+  host: "0.0.0.0"
+  port: 8080
+  workers: 4
+  reload: false
+  log_level: "INFO"
+  log_format: "json"
+  log_file: "/var/log/ddos_system/production.log"
+  log_max_size_mb: 100
+  log_backup_count: 10
+  max_queue_size: 100000
+  worker_threads: 8
+  enable_profiling: false
+  shutdown_timeout_seconds: 30
+  startup_timeout_seconds: 60
+
+collector:
+  enabled: true
+  interface: "eth0"
+  promiscuous: true
+  snaplen: 1518
+  filter_bpf: ""
+  buffer_size_mb: 256
+  use_pf_ring: true
+  use_dpdk: false
+  flow_idle_timeout: 30
+  flow_active_timeout: 60
+  max_flows: 500000
+  max_packets_per_second: 1000000
+  drop_excess_packets: true
+
+cloud_agent:
+  enabled: true
+  provider: "aws"
+  poll_interval_seconds: 5
+  aws:
+    region: "${AWS_REGION:us-east-1}"
+    vpc_ids:
+      - "${AWS_VPC_ID_1}"
+      - "${AWS_VPC_ID_2}"
+    log_group_names:
+      - "/aws/vpc/flow-logs/prod"
+    kinesis_stream: "${AWS_KINESIS_STREAM}"
+    use_flow_logs: true
+    use_guardduty: false
+  azure:
+    subscription_id: "${AZURE_SUBSCRIPTION_ID}"
+    resource_group: "${AZURE_RESOURCE_GROUP}"
+    network_watcher: "${AZURE_NETWORK_WATCHER}"
+    storage_account: "${AZURE_STORAGE_ACCOUNT}"
+  gcp:
+    project_id: "${GCP_PROJECT_ID}"
+    subscription_name: "${GCP_PUBSUB_SUBSCRIPTION}"
+    topic_name: "${GCP_PUBSUB_TOPIC}"
+
+kafka:
+  enabled: true
+  bootstrap_servers: "${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}"
+  security_protocol: "SASL_SSL"
+  sasl_mechanism: "PLAIN"
+  sasl_username: "${KAFKA_USERNAME}"
+  sasl_password: "${KAFKA_PASSWORD}"
+  ssl_ca_location: "/etc/ssl/certs/kafka-ca.pem"
+  topics:
+    flows: "network_flows_prod"
+    alerts: "ddos_alerts_prod"
+    metrics: "detection_metrics_prod"
+    mitigation: "mitigation_events_prod"
+  producer:
+    client_id: "ddos-producer-prod"
+    batch_size: 32768
+    linger_ms: 5
+    compression: "zstd"
+    acks: "all"
+    retries: 5
+    max_in_flight_requests_per_connection: 5
+    enable_idempotence: true
+  consumer:
+    group_id: "ddos-detection-group-prod"
+    auto_offset_reset: "latest"
+    enable_auto_commit: false
+    max_poll_records: 1000
+    max_poll_interval_ms: 300000
+    session_timeout_ms: 30000
+    heartbeat_interval_ms: 3000
+    fetch_max_bytes: 52428800
+    max_partition_fetch_bytes: 1048576
+
+redis:
+  enabled: true
+  host: "${REDIS_HOST:redis}"
+  port: 6379
+  password: "${REDIS_PASSWORD}"
+  db: 0
+  sentinel_enabled: true
+  sentinel_hosts:
+    - "${REDIS_SENTINEL_1}"
+    - "${REDIS_SENTINEL_2}"
+    - "${REDIS_SENTINEL_3}"
+  sentinel_master_name: "ddos-master"
+  max_connections: 100
+  socket_timeout: 10
+  socket_connect_timeout: 10
+  retry_on_timeout: true
+  rate_limit_enabled: true
+  rate_limit_default_pps: 1000
+  rate_limit_burst: 2000
+
+detection:
+  enabled: true
+  mode: "ensemble"
+  window_sizes: [1, 5, 10, 60]
+  feature_extractor:
+    max_flows_per_window: 100000
+    enable_tcp_flags: true
+    enable_payload_analysis: false
+    enable_dns_features: true
+    feature_normalization: true
+  threshold:
+    packets_per_second_threshold: 10000
+    bytes_per_second_threshold: 100000000
+    flows_per_second_threshold: 5000
+    packets_per_second_per_ip: 5000
+    connections_per_second_per_ip: 1000
+    entropy_src_ip_threshold: 0.7
+    entropy_dst_ip_threshold: 0.7
+    entropy_src_port_threshold: 0.6
+    syn_flood_syn_ratio: 0.8
+    syn_flood_min_rate: 5000
+    udp_flood_ratio: 0.7
+    udp_flood_min_rate: 10000
+    icmp_flood_ratio: 0.5
+    icmp_flood_min_rate: 5000
+    http_flood_requests_per_second: 1000
+    enable_dynamic_thresholds: true
+    dynamic_window_size: 300
+    dynamic_threshold_multiplier: 3.0
+    alert_cooldown_seconds: 30
+  ml:
+    enabled: true
+    model_type: "ensemble"
+    model_path: "/app/models/production/ensemble_model.pkl"
+    isolation_forest_path: "/app/models/production/isolation_forest.pkl"
+    xgboost_path: "/app/models/production/xgboost.json"
+    lstm_autoencoder_path: "/app/models/production/lstm_autoencoder.h5"
+    anomaly_threshold: 0.5
+    confidence_threshold: 0.7
+    batch_size: 64
+    use_gpu: true
+    enable_online_learning: true
+    online_learning_interval_hours: 24
+    online_learning_min_samples: 10000
+  ensemble:
+    voting_strategy: "weighted"
+    threshold_weight: 0.35
+    ml_weight: 0.45
+    entropy_weight: 0.20
+    min_confidence: 0.7
+    min_agreeing_detectors: 2
+    cascade_threshold_first: true
+    cascade_ml_threshold: 0.75
+
+mitigation:
+  enabled: true
+  auto_mitigate: true
+  dry_run: false
+  rule_injector:
+    enabled: true
+    firewall_type: "auto"
+    default_chain: "INPUT"
+    default_table: "filter"
+    default_ttl_seconds: 3600
+    max_rules: 10000
+    require_sudo: true
+    enable_rollback: true
+    backup_rules: true
+  cloud_shield:
+    enabled: true
+    provider: "aws"
+    auto_enable: true
+    enable_threshold_bps: 50000000
+    enable_threshold_pps: 25000
+    aws_shield_advanced_enabled: true
+    aws_protection_group_ids:
+      - "${AWS_SHIELD_PROTECTION_GROUP_ID}"
+    azure_ddos_protection_plan_id: "${AZURE_DDOS_PLAN_ID}"
+    gcp_cloud_armor_policy: "ddos-policy-prod"
+  scrubber:
+    enabled: true
+    min_pps_threshold: 50000
+    min_bps_threshold: 1000000000
+    min_duration_seconds: 30
+    auto_rollback: true
+    rollback_after_seconds: 3600
+    scrubber_ipv4: "${SCRUBBER_IPV4}"
+    scrubber_ipv6: "${SCRUBBER_IPV6}"
+    scrubber_asn: "${SCRUBBER_ASN}"
+    bgp_router_ip: "${BGP_ROUTER_IP}"
+    bgp_asn: "${BGP_ASN}"
+    bgp_peer_ip: "${BGP_PEER_IP}"
+    redirect_method: "bgp"
+  rate_limiter:
+    enabled: true
+    default_packet_rate: 1000
+    default_byte_rate: 10485760
+    default_connection_rate: 100
+    default_burst_multiplier: 2.0
+    max_rules: 10000
+    use_sliding_window: true
+    rule_cleanup_interval: 60
+
+monitoring:
+  enabled: true
+  metrics:
+    enabled: true
+    port: 9091
+    endpoint: "/metrics"
+    namespace: "ddos_protection"
+    subsystem: "detection"
+    collection_interval_seconds: 10
+    enable_detection_metrics: true
+    enable_traffic_metrics: true
+    enable_mitigation_metrics: true
+    enable_system_metrics: true
+  grafana:
+    enabled: true
+    url: "https://grafana.internal.example.com"
+    api_key: "${GRAFANA_API_KEY}"
+    dashboard_uid: "ddos-protection-prod"
+    folder_id: 0
+  influxdb:
+    enabled: true
+    url: "https://influxdb.internal.example.com:8086"
+    org: "ddos_production"
+    bucket: "metrics"
+    token: "${INFLUXDB_TOKEN}"
+    batch_size: 5000
+    flush_interval_seconds: 10
+
+alerts:
+  enabled: true
+  alert_manager:
+    deduplication_window_seconds: 60
+    max_alerts_per_minute: 100
+    min_severity: "medium"
+    auto_resolve_seconds: 3600
+  slack:
+    enabled: true
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    channel: "#ddos-alerts-prod"
+    username: "DDoS Protection Bot"
+    icon_emoji: ":shield:"
+  pagerduty:
+    enabled: true
+    integration_key: "${PAGERDUTY_INTEGRATION_KEY}"
+    severity_mapping:
+      critical: "critical"
+      high: "error"
+      medium: "warning"
+  email:
+    enabled: true
+    smtp_host: "${SMTP_HOST}"
+    smtp_port: 587
+    smtp_user: "${SMTP_USER}"
+    smtp_password: "${SMTP_PASSWORD}"
+    from_email: "ddos-alerts@example.com"
+    to_emails:
+      - "security-team@example.com"
+      - "network-operations@example.com"
+    use_tls: true
+  webhook:
+    enabled: true
+    url: "${WEBHOOK_URL}"
+    headers:
+      Authorization: "Bearer ${WEBHOOK_TOKEN}"
+      Content-Type: "application/json"
+    retry_count: 3
+    retry_delay_seconds: 5
+
+database:
+  enabled: true
+  postgres:
+    host: "${POSTGRES_HOST}"
+    port: 5432
+    database: "ddos_production"
+    user: "${POSTGRES_USER}"
+    password: "${POSTGRES_PASSWORD}"
+    ssl_mode: "require"
+    pool_size: 20
+    max_overflow: 40
+    pool_timeout: 30
+    pool_recycle: 3600
+  elasticsearch:
+    enabled: true
+    hosts:
+      - "https://es1.internal.example.com:9200"
+      - "https://es2.internal.example.com:9200"
+      - "https://es3.internal.example.com:9200"
+    index_prefix: "ddos-logs-prod-"
+    username: "${ELASTICSEARCH_USER}"
+    password: "${ELASTICSEARCH_PASSWORD}"
+    verify_certs: true
+    ca_certs: "/etc/ssl/certs/elasticsearch-ca.pem"
+
+health:
+  enabled: true
+  endpoint: "/health"
+  interval_seconds: 15
+  timeout_seconds: 5
+  dependencies:
+    kafka: true
+    redis: true
+    postgres: true
+    influxdb: true
+  readiness_threshold: 3
+  liveness_threshold: 5
+
+features:
+  use_mock_kafka: false
+  enable_trace_logging: false
+  enable_request_logging: true
+  enable_circuit_breaker: true
+  enable_retry_with_backoff: true
+  enable_distributed_tracing: true
+  enable_chaos_testing: false
+
+security:
+  api_auth_enabled: true
+  api_key_header: "X-API-Key"
+  api_keys:
+    - "${BOOTSTRAP_API_KEY}"
+  jwt_enabled: true
+  jwt_secret: "${JWT_SECRET}"
+  jwt_algorithm: "HS256"
+  jwt_expiration_minutes: 60
+  tls_enabled: true
+  tls_cert_path: "/etc/ssl/certs/ddos-system.crt"
+  tls_key_path: "/etc/ssl/private/ddos-system.key"
+  api_rate_limit: 100
+  management_api_whitelist:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+
+resources:
+  max_cpu_cores: 4
+  max_memory_mb: 8192
+  max_disk_gb: 100
+  degradation_threshold_memory_percent: 85
+  degradation_threshold_cpu_percent: 80
+
+backup:
+  enabled: true
+  interval_hours: 24
+  retention_days: 30
+  backup_path: "/backup/ddos_system"
+  s3_bucket: "${DDOS_BACKUP_S3_BUCKET}"
+  backup_configs: true
+  backup_models: true
+  backup_alert_history: true
+
+sla:
+  detection_latency_ms: 500
+  mitigation_latency_ms: 2000
+  availability_percent: 99.99
+  max_false_positive_rate: 0.01

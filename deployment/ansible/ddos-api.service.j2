@@ -1,0 +1,20 @@
+[Unit]
+Description=DDoS Protection System - API
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User={{ service_user }}
+Group={{ service_group }}
+WorkingDirectory={{ install_dir }}
+Environment="PATH={{ install_dir }}/venv/bin"
+Environment="PYTHONPATH={{ install_dir }}"
+ExecStart={{ install_dir }}/venv/bin/uvicorn src.api.main:app --host 0.0.0.0 --port {{ api_port }}
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

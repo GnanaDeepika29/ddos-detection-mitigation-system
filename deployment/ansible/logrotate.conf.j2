@@ -1,0 +1,13 @@
+{{ log_dir }}/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 {{ service_user }} {{ service_group }}
+    sharedscripts
+    postrotate
+        systemctl kill -s USR1 ddos-collector ddos-detector ddos-mitigation ddos-api >/dev/null 2>&1 || true
+    endscript
+}

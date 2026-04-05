@@ -1,0 +1,42 @@
+app:
+  name: "ddos-protection-system"
+  version: "{{ app_version | default('1.0.0') }}"
+  environment: "{{ environment | default('production') }}"
+  debug: false
+  host: "0.0.0.0"
+  port: {{ api_port }}
+  log_level: "INFO"
+
+kafka:
+  bootstrap_servers: "{{ kafka_brokers }}"
+  topics:
+    flows: "{{ kafka_topic_flows }}"
+    alerts: "{{ kafka_topic_alerts }}"
+
+redis:
+  host: "{{ redis_host }}"
+  port: {{ redis_port }}
+  db: 0
+
+detection:
+  window_sizes: [1, 5, 10, 60]
+  mode: "ensemble"
+  threshold:
+    packets_per_second_threshold: 10000
+    entropy_src_ip_threshold: 0.7
+  ml:
+    model_path: "{{ install_dir }}/models/isolation_forest.pkl"
+
+mitigation:
+  auto_mitigate: true
+  dry_run: false
+  cloud_provider: "{{ cloud_provider }}"
+
+monitoring:
+  metrics_enabled: true
+  metrics_port: {{ metrics_port }}
+
+security:
+  tls_enabled: {{ enable_tls | lower }}
+  tls_cert_path: "{{ tls_cert_path }}"
+  tls_key_path: "{{ tls_key_path }}"
