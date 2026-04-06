@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ddos-system
+
+resources:
+- configmap.yaml
+- deployment.yaml
+- service.yaml
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/version: latest
+
+images:
+  - name: ddos-system/collector
+    newTag: latest
+  - name: ddos-system/detector
+    newTag: latest
+  - name: ddos-system/mitigation
+    newTag: latest
+  - name: ddos-system/api
+    newTag: latest
+  - name: ddos-system/simulator
+    newTag: latest
