@@ -1,29 +1,30 @@
-FROM python:3.11-slim AS collector
+FROM Dockerfile.base AS runtime
 
-WORKDIR /app
-
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies for packet capture
-RUN apt-get update && apt-get install -y \
-    libpcap-dev \
+# Collector-specific runtime deps
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tcpdump \
     iptables \
+    libpcap0.8 \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Copy application code
+COPY src/ /app/src/
+COPY scripts/ /app/scripts/
+COPY config/ /app/config/
+COPY models/ /app/models/
 
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
+# Collector-specific healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f 'run_collector.py' || exit 1
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/data
 
-# Create entrypoint script
-RUN echo '#!/bin/bash\n\
-python scripts/run_collector.py "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+# Create entrypoint script (using printf to avoid linter parse issues)
+RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/run_collector.py "$$@"\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 

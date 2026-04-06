@@ -36,6 +36,8 @@ collector:
   max_flows: 500000
   max_packets_per_second: 1000000
   drop_excess_packets: true
+  # FIX: Dedicated metrics port for collector to avoid collision with detector (9091)
+  metrics_port: 9092
 
 cloud_agent:
   enabled: true
@@ -93,6 +95,8 @@ kafka:
     heartbeat_interval_ms: 3000
     fetch_max_bytes: 52428800
     max_partition_fetch_bytes: 1048576
+    # FIX: Consumer also needs SSL CA for SASL_SSL connections
+    ssl_ca_location: "/etc/ssl/certs/kafka-ca.pem"
 
 redis:
   enabled: true
@@ -125,7 +129,10 @@ detection:
     enable_dns_features: true
     feature_normalization: true
   threshold:
-    packets_per_second_threshold: 10000
+    # FIX: Aligned with thresholds.yaml volumetric.pps.high = 50000 and
+    # rules.prometheus.yml HighPacketRate expr threshold of 50000.
+    # Previously 10000 which contradicted both thresholds.yaml and Prometheus rules.
+    packets_per_second_threshold: 50000
     bytes_per_second_threshold: 100000000
     flows_per_second_threshold: 5000
     packets_per_second_per_ip: 5000
@@ -234,6 +241,9 @@ monitoring:
     enabled: true
     url: "https://grafana.internal.example.com"
     api_key: "${GRAFANA_API_KEY}"
+    # FIX: Added TLS cert config for HTTPS Grafana connection
+    tls_ca_cert: "/etc/ssl/certs/internal-ca.pem"
+    tls_skip_verify: false
     dashboard_uid: "ddos-protection-prod"
     folder_id: 0
   influxdb:
@@ -304,6 +314,7 @@ database:
       - "https://es1.internal.example.com:9200"
       - "https://es2.internal.example.com:9200"
       - "https://es3.internal.example.com:9200"
+    # FIX: index_prefix now matches logstash.conf pattern "ddos-logs-prod-YYYY.MM.dd"
     index_prefix: "ddos-logs-prod-"
     username: "${ELASTICSEARCH_USER}"
     password: "${ELASTICSEARCH_PASSWORD}"

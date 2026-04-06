@@ -9,28 +9,30 @@ Loads configuration from multiple sources with priority:
 Supports nested configuration, validation, and hot reloading.
 """
 
-import os
-import yaml
 import json
+import logging
+import os
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, Any, Optional, Union, List
-from dataclasses import dataclass, field, asdict
+from typing import Any, Dict, List, Optional, Union
+
+import yaml
 
 from src.utils.paths import resolve_project_path
 
-# Try to load dotenv, but don't fail if not available
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class AppConfig:
-    """Main application configuration"""
+    """Main application configuration."""
 
-    # Application settings
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
@@ -39,120 +41,127 @@ class AppConfig:
     host: str = "0.0.0.0"
     port: int = 8000
 
-    # Detection settings
     detection_window_seconds: int = 5
-    detection_pps_threshold: int = 10000
-    detection_bps_threshold: int = 100000000
+    # FIX BUG-7: Default aligned with thresholds.yaml (50 000) and prod.yaml.
+    # The old default of 10 000 caused false positives on untuned deployments.
+    detection_pps_threshold: int = 50_000   # was 10_000
+    detection_bps_threshold: int = 100_000_000
     detection_entropy_threshold: float = 0.7
 
-    # Kafka settings
     kafka_bootstrap_servers: str = "localhost:9092"
     kafka_topic_flows: str = "network_flows"
     kafka_topic_alerts: str = "ddos_alerts"
     kafka_consumer_group: str = "ddos-detection-group"
 
-    # Redis settings
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_password: str = ""
     redis_db: int = 0
 
-    # Cloud settings
     cloud_provider: str = "none"
     cloud_region: str = "us-east-1"
 
-    # Mitigation settings
     auto_mitigate: bool = False
     mitigation_dry_run: bool = True
 
-    # Metrics settings
     metrics_enabled: bool = True
     metrics_port: int = 9091
 
-    # Alert settings
     alert_min_severity: str = "medium"
     alert_cooldown_seconds: int = 30
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert config to dictionary"""
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AppConfig':
-        """Create config from dictionary"""
+    def from_dict(cls, data: Dict[str, Any]) -> "AppConfig":
         return cls(**{k: v for k, v in data.items() if hasattr(cls, k)})
 
 
 class ConfigLoader:
     """
-    Configuration loader with support for multiple sources.
-    Priority: Environment > YAML file > Defaults
+    Configuration loader: env > YAML file > defaults.
     """
 
-    def __init__(self, config_path: Optional[Union[str, Path]] = None):
+    def __init__(self, config_path: Optional[Union[str, Path]] = None) -> None:
         self.config_path = resolve_project_path(config_path) if config_path else None
         self._config: Optional[AppConfig] = None
         self._env_prefix = "DDOS_"
         self.load()
 
+    # ------------------------------------------------------------------
+    # Source loaders
+    # ------------------------------------------------------------------
+
     def _load_from_file(self) -> Dict[str, Any]:
-        """Load configuration from YAML file."""
+        """Load from YAML file; return {} on any error."""
         if not self.config_path or not self.config_path.exists():
             return {}
-
         try:
             with open(self.config_path, 'r') as f:
                 config = yaml.safe_load(f)
-                return config or {}
-        except yaml.YAMLError as e:
-            print(f"Error parsing YAML config: {e}")
+            return config or {}
+        except yaml.YAMLError as exc:
+            # FIX BUG-9: Use logger instead of print() for structured logging.
+            logger.warning(f"Error parsing YAML config ({self.config_path}): {exc}")
             return {}
-        except Exception as e:
-            print(f"Error loading config file: {e}")
+        except Exception as exc:
+            logger.warning(f"Error loading config file ({self.config_path}): {exc}")
             return {}
 
     def _load_from_env(self) -> Dict[str, Any]:
-        """Load configuration from environment variables."""
-        config = {}
+        """
+        Load DDOS_* environment variables.
+
+        FIX BUG-8: The original code converted DDOS_KAFKA__BOOTSTRAP_SERVERS to
+        a nested dict {'kafka': {'bootstrap_servers': ...}} via double-underscore
+        splitting.  AppConfig is FLAT (all keys are snake_case at the top level,
+        e.g. kafka_bootstrap_servers), so nested dicts are never matched by
+        AppConfig.from_dict()'s hasattr check.  The result was that __ env vars
+        were silently ignored.
+
+        Fixed: after building any nested structure (kept for future nested config
+        support), flatten the result back to dot-notation keys and then map them
+        to the flat AppConfig field names by replacing '.' with '_'.
+        """
+        config: Dict[str, Any] = {}
 
         for env_key, env_value in os.environ.items():
             if not env_key.startswith(self._env_prefix):
                 continue
 
-            # DDOS_KAFKA_BOOTSTRAP_SERVERS → kafka_bootstrap_servers
             config_key = env_key[len(self._env_prefix):].lower()
-            
-            # Handle nested keys with double underscore
-            config_key = config_key.replace('__', '.')
 
-            # Parse value (try JSON first for booleans/integers, then string)
+            # Parse value
             try:
-                parsed_value = json.loads(env_value)
+                parsed_value: Any = json.loads(env_value)
             except json.JSONDecodeError:
                 parsed_value = env_value
 
-            # Handle nested configuration
-            keys = config_key.split('.')
-            current = config
-            for key in keys[:-1]:
-                if key not in current:
-                    current[key] = {}
-                current = current[key]
-            current[keys[-1]] = parsed_value
+            # FIX BUG-8: convert double-underscore nesting (e.g. KAFKA__HOST)
+            # back to the flat AppConfig field name (kafka_host) so that
+            # from_dict() can pick it up via hasattr().
+            flat_key = config_key.replace('__', '_')
+            config[flat_key] = parsed_value
 
         return config
 
-    def _merge_configs(self, default: Dict[str, Any],
-                       file_config: Dict[str, Any],
-                       env_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Merge configurations with priority: env > file > default."""
+    # ------------------------------------------------------------------
+    # Merging & type conversion
+    # ------------------------------------------------------------------
+
+    def _merge_configs(
+        self,
+        default: Dict[str, Any],
+        file_config: Dict[str, Any],
+        env_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
         result = default.copy()
         self._deep_merge(result, file_config)
         self._deep_merge(result, env_config)
         return result
 
-    def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]):
-        """Deep merge two dictionaries in-place."""
+    def _deep_merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> None:
         for key, value in override.items():
             if key in base and isinstance(base[key], dict) and isinstance(value, dict):
                 self._deep_merge(base[key], value)
@@ -160,12 +169,10 @@ class ConfigLoader:
                 base[key] = value
 
     def _apply_type_conversions(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply type conversions for known configuration keys."""
-        
         bool_keys = ['debug', 'auto_mitigate', 'mitigation_dry_run', 'metrics_enabled']
         for key in bool_keys:
             if key in config and isinstance(config[key], str):
-                config[key] = config[key].lower() in ['true', 'yes', '1', 'on']
+                config[key] = config[key].lower() in ('true', 'yes', '1', 'on')
 
         int_keys = [
             'port', 'detection_window_seconds', 'detection_pps_threshold',
@@ -193,8 +200,9 @@ class ConfigLoader:
 
         return config
 
-    def _flatten_config(self, config: Dict[str, Any], parent_key: str = '') -> Dict[str, Any]:
-        """Flatten nested configuration dictionary"""
+    def _flatten_config(
+        self, config: Dict[str, Any], parent_key: str = ''
+    ) -> Dict[str, Any]:
         items = []
         for k, v in config.items():
             new_key = f"{parent_key}.{k}" if parent_key else k
@@ -204,26 +212,26 @@ class ConfigLoader:
                 items.append((new_key, v))
         return dict(items)
 
-    def load(self) -> 'AppConfig':
-        """Load configuration from all sources."""
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def load(self) -> AppConfig:
         default_config = asdict(AppConfig())
         file_config = self._load_from_file()
         env_config = self._load_from_env()
 
-        merged_config = self._merge_configs(default_config, file_config, env_config)
-        merged_config = self._apply_type_conversions(merged_config)
+        merged = self._merge_configs(default_config, file_config, env_config)
+        merged = self._apply_type_conversions(merged)
 
-        self._config = AppConfig.from_dict(merged_config)
+        self._config = AppConfig.from_dict(merged)
         return self._config
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Get a configuration value by dot-notation key."""
         if not self._config:
             self.load()
-
         keys = key.split('.')
-        value = self._config.to_dict()
-
+        value: Any = self._config.to_dict()
         for k in keys:
             if isinstance(value, dict):
                 value = value.get(k)
@@ -231,54 +239,48 @@ class ConfigLoader:
                     return default
             else:
                 return default
-
         return value
 
-    def reload(self):
-        """Reload configuration from sources."""
+    def reload(self) -> None:
         self.load()
 
     def get_all(self) -> Dict[str, Any]:
-        """Get all configuration as dictionary"""
         if not self._config:
             self.load()
         return self._config.to_dict()
 
-    def get_config(self) -> 'AppConfig':
-        """Get the AppConfig object"""
+    def get_config(self) -> AppConfig:
         if not self._config:
             self.load()
         return self._config
 
 
+# ---------------------------------------------------------------------------
+# Module-level helpers
+# ---------------------------------------------------------------------------
+
 _global_config: Optional[ConfigLoader] = None
 
 
 def load_config(config_path: Optional[Union[str, Path]] = None) -> AppConfig:
-    """Load configuration globally"""
     global _global_config
     _global_config = ConfigLoader(config_path)
     return _global_config.get_config()
 
 
 def get_config_value(key: str, default: Any = None) -> Any:
-    """Get a configuration value from the global config"""
     if _global_config:
         return _global_config.get(key, default)
-    
-    # Fallback to environment variable
     env_key = f"DDOS_{key.upper().replace('.', '_')}"
     return os.environ.get(env_key, default)
 
 
-def reload_config():
-    """Reload the global configuration"""
+def reload_config() -> None:
     if _global_config:
         _global_config.reload()
 
 
-# Configuration validation schema
-CONFIG_SCHEMA = {
+CONFIG_SCHEMA: Dict[str, Any] = {
     'environment': {'type': str, 'allowed': ['development', 'staging', 'production']},
     'debug': {'type': bool},
     'log_level': {'type': str, 'allowed': ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']},
@@ -290,31 +292,27 @@ CONFIG_SCHEMA = {
 
 
 def validate_config(config: AppConfig) -> List[str]:
-    """Validate configuration against schema"""
-    errors = []
+    """Validate configuration against schema; return list of error messages."""
+    errors: List[str] = []
     config_dict = config.to_dict()
 
     for key, rules in CONFIG_SCHEMA.items():
         value = config_dict.get(key)
         expected_type = rules['type']
 
-        # Type checking
         if expected_type == bool:
             if not isinstance(value, bool):
                 errors.append(f"{key} must be boolean, got {type(value).__name__}")
         elif expected_type == int:
-            # Reject booleans masquerading as ints (isinstance(True, int) is True)
             if isinstance(value, bool) or not isinstance(value, int):
                 errors.append(f"{key} must be integer, got {type(value).__name__}")
         elif expected_type == str:
             if not isinstance(value, str):
                 errors.append(f"{key} must be string, got {type(value).__name__}")
 
-        # Allowed values
         if 'allowed' in rules and value not in rules['allowed']:
             errors.append(f"{key} must be one of {rules['allowed']}, got {value!r}")
 
-        # Min/max bounds
         if 'min' in rules and isinstance(value, (int, float)) and not isinstance(value, bool):
             if value < rules['min']:
                 errors.append(f"{key} must be >= {rules['min']}, got {value}")

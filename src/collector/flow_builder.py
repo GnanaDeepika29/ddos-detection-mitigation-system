@@ -30,27 +30,31 @@ class FlowKey:
     _port_lo: int = field(init=False, repr=False, compare=False)
     _port_hi: int = field(init=False, repr=False, compare=False)
 
-    def __post_init__(self):
-        # Normalize direction for bidirectional flows
-        lo = (self.ip_src, self.sport)
-        hi = (self.ip_dst, self.dport)
+    def __post_init__(self) -> None:
+        # Normalise direction so (A→B) and (B→A) hash to the same key.
+        lo: Tuple[str, int] = (self.ip_src, self.sport)
+        hi: Tuple[str, int] = (self.ip_dst, self.dport)
         if lo > hi:
             lo, hi = hi, lo
         self._ip_lo, self._port_lo = lo
         self._ip_hi, self._port_hi = hi
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         return hash((self._ip_lo, self._port_lo, self._ip_hi, self._port_hi, self.protocol))
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, FlowKey):
             return False
-        return (self._ip_lo == other._ip_lo and self._port_lo == other._port_lo and
-                self._ip_hi == other._ip_hi and self._port_hi == other._port_hi and
-                self.protocol == other.protocol)
+        return (
+            self._ip_lo == other._ip_lo
+            and self._port_lo == other._port_lo
+            and self._ip_hi == other._ip_hi
+            and self._port_hi == other._port_hi
+            and self.protocol == other.protocol
+        )
 
-    def get_reverse(self) -> 'FlowKey':
-        """Get the reverse flow key"""
+    def get_reverse(self) -> "FlowKey":
+        """Return the reverse-direction flow key."""
         return FlowKey(
             ip_src=self.ip_dst,
             ip_dst=self.ip_src,
@@ -79,10 +83,15 @@ class FlowStats:
     packet_size_sum: int = 0
     packet_size_sum_reverse: int = 0
     interarrival_times: deque = field(default_factory=lambda: deque(maxlen=1000))
-    last_packet_time: float = field(default_factory=time.time)
 
-    def update(self, packet: Dict[str, Any], reverse: bool = False):
-        """Update flow statistics with a new packet"""
+    # FIX BUG-12: Was initialised to time.time() at field creation, so the
+    # very first interarrival was measured from object-creation time rather
+    # than from the first real packet — producing a near-zero or garbage value.
+    # Using None as sentinel lets update() skip the first observation.
+    last_packet_time: Optional[float] = None
+
+    def update(self, packet: Dict[str, Any], reverse: bool = False) -> None:
+        """Update flow statistics with a new packet."""
         now = time.time()
         packet_len = packet.get('length', 0)
 
@@ -95,10 +104,12 @@ class FlowStats:
             self.bytes_reverse += packet_len
             self.packet_size_sum_reverse += packet_len
 
-        # Calculate interarrival time
-        interarrival = now - self.last_packet_time
-        if 0 < interarrival < 60:  # Sanity check
-            self.interarrival_times.append(interarrival)
+        # FIX BUG-12 (cont.): Skip the first interarrival; only record from
+        # the second packet onward when last_packet_time is known.
+        if self.last_packet_time is not None:
+            interarrival = now - self.last_packet_time
+            if 0 < interarrival < 60:   # Sanity-check against stale timestamps
+                self.interarrival_times.append(interarrival)
 
         self.last_packet_time = now
         self.last_seen = now
@@ -108,62 +119,78 @@ class FlowStats:
 
         if protocol == 6:  # TCP
             tcp_flags = packet.get('tcp_flags', 0)
-            if tcp_flags & 0x02:  # SYN flag
+            if tcp_flags & 0x02:            # SYN
                 self.syn_count += 1
             if (tcp_flags & 0x12) == 0x12:  # SYN-ACK
                 self.syn_ack_count += 1
-            if tcp_flags & 0x04:  # RST flag
+            if tcp_flags & 0x04:            # RST
                 self.rst_count += 1
-            if tcp_flags & 0x01:  # FIN flag
+            if tcp_flags & 0x01:            # FIN
                 self.fin_count += 1
             if 'tcp_window' in packet:
                 self.tcp_window_sizes.append(packet['tcp_window'])
         elif protocol == 17:  # UDP
             if 'udp_len' in packet:
                 self.udp_payload_sizes.append(packet['udp_len'])
-        elif protocol == 1:  # ICMP
+        elif protocol == 1:   # ICMP
             if 'icmp_type' in packet:
                 self.icmp_types.append(packet['icmp_type'])
 
+    # ------------------------------------------------------------------
+    # Derived properties
+    # ------------------------------------------------------------------
+
     @property
     def duration(self) -> float:
-        """Flow duration in seconds"""
+        """Flow duration in seconds."""
         return self.last_seen - self.first_seen
 
     @property
     def packets_per_second(self) -> float:
-        """Packets per second (forward direction)"""
-        return self.packets / self.duration if self.duration > 0 else 0
+        """Forward-direction packets per second."""
+        return self.packets / self.duration if self.duration > 0 else 0.0
 
     @property
     def bytes_per_second(self) -> float:
-        """Bytes per second (forward direction)"""
-        return self.bytes / self.duration if self.duration > 0 else 0
+        """Forward-direction bytes per second."""
+        return self.bytes / self.duration if self.duration > 0 else 0.0
 
     @property
     def avg_packet_size(self) -> float:
-        """Average packet size (forward direction)"""
-        return self.packet_size_sum / self.packets if self.packets > 0 else 0
+        """Average packet size (forward direction)."""
+        return self.packet_size_sum / self.packets if self.packets > 0 else 0.0
 
     @property
     def tcp_syn_ratio(self) -> float:
-        """Ratio of SYN to SYN-ACK packets"""
-        return self.syn_count / self.syn_ack_count if self.syn_ack_count > 0 else 0
+        """
+        Fraction of total TCP packets that are SYNs.
+
+        FIX BUG-8: The original formula was syn_count / syn_ack_count which:
+          • Returned 0 when syn_ack_count == 0 — incorrect: a pure SYN flood
+            has NO SYN-ACKs, so the ratio should be 1.0, not 0.
+          • Was the wrong metric: thresholds.yaml and prod.yaml both define
+            syn_flood_syn_ratio as "fraction of packets that are SYN" (i.e.
+            how dominant SYNs are in the flow), not the SYN:SYN-ACK ratio.
+
+        Correct formula: syn_packets / total_packets.
+        """
+        total = self.total_packets
+        return self.syn_count / total if total > 0 else 0.0
 
     @property
     def total_packets(self) -> int:
-        """Total packets in both directions"""
+        """Total packets in both directions."""
         return self.packets + self.packets_reverse
 
     @property
     def total_bytes(self) -> int:
-        """Total bytes in both directions"""
+        """Total bytes in both directions."""
         return self.bytes + self.bytes_reverse
 
 
 @dataclass
 class Flow:
-    """Complete flow object with key and statistics"""
+    """Complete flow object with key and statistics."""
     key: FlowKey
     stats: FlowStats
     features: Dict[str, Any] = field(default_factory=dict)
@@ -171,7 +198,7 @@ class Flow:
     vlan_id: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert flow to dictionary for serialization"""
+        """Convert flow to a serialisable dictionary."""
         iat = list(self.stats.interarrival_times)
         tcp_wins = list(self.stats.tcp_window_sizes)
         udp_sizes = list(self.stats.udp_payload_sizes)
@@ -199,58 +226,69 @@ class Flow:
             'tcp_syn_ack_count': self.stats.syn_ack_count,
             'tcp_rst_count': self.stats.rst_count,
             'tcp_fin_count': self.stats.fin_count,
+            # BUG-8 fix: now correctly returns SYN / total_packets
             'tcp_syn_ratio': self.stats.tcp_syn_ratio,
-            'tcp_window_avg': sum(tcp_wins) / len(tcp_wins) if tcp_wins else 0,
+            'tcp_window_avg': sum(tcp_wins) / len(tcp_wins) if tcp_wins else 0.0,
             'tcp_window_std': self._calculate_std(tcp_wins),
-            'udp_payload_avg': sum(udp_sizes) / len(udp_sizes) if udp_sizes else 0,
+            'udp_payload_avg': sum(udp_sizes) / len(udp_sizes) if udp_sizes else 0.0,
             'udp_payload_std': self._calculate_std(udp_sizes),
-            'interarrival_mean': sum(iat) / len(iat) if iat else 0,
+            'interarrival_mean': sum(iat) / len(iat) if iat else 0.0,
             'interarrival_std': self._calculate_std(iat),
             'application_protocol': self.application_protocol,
             'vlan_id': self.vlan_id,
         }
 
-    def _calculate_std(self, values: List[float]) -> float:
-        """Calculate standard deviation of a list of values"""
+    @staticmethod
+    def _calculate_std(values: List[float]) -> float:
+        """Population standard deviation."""
         if not values:
-            return 0
+            return 0.0
         mean = sum(values) / len(values)
         variance = sum((x - mean) ** 2 for x in values) / len(values)
         return variance ** 0.5
 
     def get_flow_id(self) -> str:
-        """Generate a unique flow ID"""
-        flow_string = (f"{self.key._ip_lo}|{self.key._port_lo}|"
-                       f"{self.key._ip_hi}|{self.key._port_hi}|{self.key.protocol}")
+        """Generate a short, stable, unique flow ID (hex digest)."""
+        flow_string = (
+            f"{self.key._ip_lo}|{self.key._port_lo}|"
+            f"{self.key._ip_hi}|{self.key._port_hi}|{self.key.protocol}"
+        )
         return hashlib.sha256(flow_string.encode()).hexdigest()[:16]
 
     def is_complete(self) -> bool:
-        """Check if flow is complete (TCP termination)"""
-        if self.key.protocol == 6:  # TCP
+        """Return True if the TCP flow has been terminated (FIN or RST)."""
+        if self.key.protocol == 6:
             return self.stats.fin_count > 0 or self.stats.rst_count > 0
         return False
 
 
 class FlowBuilder:
-    """Builds and manages network flows from packets"""
-    
-    def __init__(self, idle_timeout: int = 30, active_timeout: int = 60, max_flows: int = 100000):
+    """Builds and manages bidirectional network flows from individual packets."""
+
+    def __init__(
+        self,
+        idle_timeout: int = 30,
+        active_timeout: int = 60,
+        max_flows: int = 100_000,
+    ) -> None:
         self.idle_timeout = idle_timeout
         self.active_timeout = active_timeout
         self.max_flows = max_flows
         self.flows: Dict[FlowKey, Flow] = {}
-        self.exported_flows: deque = deque(maxlen=10000)
+        self.exported_flows: deque = deque(maxlen=10_000)
         self.last_processed_flow: Optional[Flow] = None
         self._cleanup_interval = min(self.idle_timeout, 10)
         self.last_cleanup = time.time()
 
-        logger.info(f"FlowBuilder initialized: idle_timeout={idle_timeout}s, "
-                    f"active_timeout={active_timeout}s, max_flows={max_flows}")
+        logger.info(
+            f"FlowBuilder initialised: idle_timeout={idle_timeout}s, "
+            f"active_timeout={active_timeout}s, max_flows={max_flows}"
+        )
 
     def process_packet(self, packet: Dict[str, Any]) -> Optional[Flow]:
         """
-        Process a packet and update/create flow.
-        Returns exported flow if flow completed, None otherwise.
+        Process a packet and update / create its flow.
+        Returns the exported Flow if the flow completed, None otherwise.
         """
         try:
             ip_src = packet.get('ip_src')
@@ -259,44 +297,42 @@ class FlowBuilder:
             dport = packet.get('dport', 0)
             protocol = packet.get('protocol', 0)
 
-            if not all([ip_src, ip_dst]):
+            if not (ip_src and ip_dst):
                 return None
 
-            # Create flow key
             key = FlowKey(ip_src, ip_dst, sport, dport, protocol)
+
+            # FIX BUG-9: The original direction logic was convoluted and
+            # contained unreachable code.  Simplified version:
+            #   1. Look up the canonical key directly.
+            #   2. If not found, check whether an existing flow matches the
+            #      *reverse* direction (the same normalised key, since FlowKey
+            #      normalises internally).
+            #   3. Determine `reverse` by comparing the packet's src/sport
+            #      against the stored flow key's ip_src/sport.
             flow = self.flows.get(key)
-
-            # Determine if packet is reverse direction
-            reverse = False
-            if not flow:
-                # Try reverse key
-                reverse_key = key.get_reverse()
-                flow = self.flows.get(reverse_key)
-                if flow:
-                    reverse = True
-                    key = reverse_key
-
-            # Create new flow if not exists
-            if not flow:
+            if flow is None:
+                # FlowKey normalises bidirectional flows, so looking up the
+                # reverse key yields the same normalised key — just create a
+                # new flow entry under the canonical key.
                 flow = Flow(key=key, stats=FlowStats())
                 self.flows[key] = flow
                 if len(self.flows) > self.max_flows:
                     self._evict_oldest_flows()
-            else:
-                # For existing flows, determine direction based on actual packet
-                if not reverse and (ip_src != key.ip_src or sport != key.sport):
-                    reverse = True
 
-            # Update flow statistics
+            # Determine packet direction relative to the stored flow key.
+            reverse = (ip_src != flow.key.ip_src or sport != flow.key.sport)
+
             flow.stats.update(packet, reverse)
             self.last_processed_flow = flow
 
-            # Periodic cleanup
-            if time.time() - self.last_cleanup > self._cleanup_interval:
+            # Periodic idle-flow cleanup
+            now = time.time()
+            if now - self.last_cleanup > self._cleanup_interval:
                 self._cleanup_timeout_flows()
-                self.last_cleanup = time.time()
+                self.last_cleanup = now
 
-            # Check if flow should be exported
+            # Export on active-timeout or TCP termination
             if self._should_export(flow):
                 exported = self._export_flow(key)
                 self.last_processed_flow = exported
@@ -304,63 +340,58 @@ class FlowBuilder:
 
             return None
 
-        except Exception as e:
-            logger.error(f"Error processing packet: {e}")
+        except Exception as exc:
+            logger.error(f"Error processing packet in FlowBuilder: {exc}")
             return None
 
     def _should_export(self, flow: Flow) -> bool:
-        """Determine if flow should be exported"""
-        now = time.time()
-        
-        # Active timeout reached
-        if now - flow.stats.first_seen > self.active_timeout:
+        """Return True if the flow should be exported now."""
+        if time.time() - flow.stats.first_seen > self.active_timeout:
             return True
-            
-        # Flow completed (TCP termination)
         if flow.is_complete():
             return True
-            
         return False
 
     def _export_flow(self, key: FlowKey) -> Optional[Flow]:
-        """Export and remove a flow"""
+        """Remove flow from the active table and append to exported queue."""
         flow = self.flows.pop(key, None)
         if flow:
             self.exported_flows.append(flow)
-            logger.debug(f"Exported flow {flow.get_flow_id()}: "
-                        f"{flow.stats.total_packets} packets, "
-                        f"{flow.stats.duration:.2f}s duration")
-            return flow
-        return None
+            logger.debug(
+                f"Exported flow {flow.get_flow_id()}: "
+                f"{flow.stats.total_packets} pkts, "
+                f"{flow.stats.duration:.2f}s"
+            )
+        return flow
 
-    def _cleanup_timeout_flows(self):
-        """Remove flows that have exceeded idle timeout"""
+    def _cleanup_timeout_flows(self) -> None:
+        """Export flows that have exceeded the idle timeout."""
         now = time.time()
-        to_remove = [key for key, flow in self.flows.items()
-                     if now - flow.stats.last_seen > self.idle_timeout]
-
-        for key in to_remove:
+        stale = [
+            key for key, flow in self.flows.items()
+            if now - flow.stats.last_seen > self.idle_timeout
+        ]
+        for key in stale:
             self._export_flow(key)
+        if stale:
+            logger.debug(f"Cleaned up {len(stale)} idle flows")
 
-        if to_remove:
-            logger.debug(f"Cleaned up {len(to_remove)} idle flows")
-
-    def _evict_oldest_flows(self):
-        """Evict oldest flows when max_flows limit is reached"""
+    def _evict_oldest_flows(self) -> None:
+        """LRU-evict 10 % of flows when the max-flows limit is breached."""
         if not self.flows:
             return
-            
         evict_count = max(1, int(self.max_flows * 0.1))
-        oldest = heapq.nsmallest(evict_count, self.flows.items(), 
-                                key=lambda x: x[1].stats.last_seen)
-
+        oldest = heapq.nsmallest(
+            evict_count,
+            self.flows.items(),
+            key=lambda kv: kv[1].stats.last_seen,
+        )
         for key, _ in oldest:
             self._export_flow(key)
-
-        logger.warning(f"Evicted {evict_count} oldest flows due to max limit")
+        logger.warning(f"Evicted {evict_count} oldest flows (max_flows limit reached)")
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get flow builder statistics"""
+        """Return summary statistics for the flow builder."""
         return {
             'active_flows': len(self.flows),
             'exported_flows': len(self.exported_flows),
@@ -370,7 +401,7 @@ class FlowBuilder:
         }
 
     def flush_all(self) -> List[Flow]:
-        """Export all active flows"""
+        """Export every active flow (e.g. on shutdown)."""
         flows = []
         for key in list(self.flows.keys()):
             flow = self._export_flow(key)

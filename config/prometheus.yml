@@ -25,6 +25,7 @@ scrape_configs:
     scrape_interval: 5s
     scrape_timeout: 4s
     static_configs:
+      # FIX: detector uses port 9091 (prod.yaml monitoring.metrics.port = 9091)
       - targets: ['detector:9091']
         labels:
           service: detector
@@ -43,7 +44,9 @@ scrape_configs:
     scrape_interval: 5s
     scrape_timeout: 4s
     static_configs:
-      - targets: ['collector:9091']
+      # FIX: collector now uses dedicated port 9092 (prod.yaml collector.metrics_port)
+      # to avoid collision with detector on 9091.
+      - targets: ['collector:9092']
         labels:
           service: collector
           component: ingestion

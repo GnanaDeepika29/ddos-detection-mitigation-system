@@ -1,17 +1,18 @@
 """
 Cloud Flow Log Agent
 
-Collects flow logs from cloud providers (AWS VPC Flow Logs, GCP Flow Logs, Azure NSG Flow Logs).
-Provides a unified interface for cloud-native traffic collection.
+Collects flow logs from cloud providers (AWS VPC Flow Logs, GCP Flow Logs,
+Azure NSG Flow Logs).  Provides a unified interface for cloud-native traffic
+collection.
 """
 
-import json
 import asyncio
+import json
 import logging
-from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any, List, Callable
 from datetime import datetime
+from enum import Enum
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,20 @@ class CloudFlowLogConfig:
     # Common settings
     poll_interval_seconds: int = 10
     batch_size: int = 100
-    max_queue_size: int = 10000
+    max_queue_size: int = 10_000
     include_metadata: bool = True
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """
+    Convert *value* to int, returning *default* for non-numeric strings
+    such as the "-" placeholder used in AWS VPC Flow Logs when a field
+    is not applicable (e.g. port numbers for ICMP flows).
+    """
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class CloudFlowLogAgent:
@@ -69,7 +82,11 @@ class CloudFlowLogAgent:
     Supports AWS VPC Flow Logs, Azure NSG Flow Logs, and GCP Flow Logs.
     """
 
-    def __init__(self, config: CloudFlowLogConfig, flow_handler: Optional[Callable] = None):
+    def __init__(
+        self,
+        config: CloudFlowLogConfig,
+        flow_handler: Optional[Callable] = None,
+    ) -> None:
         self.config = config
         self.flow_handler = flow_handler
         self.is_running = False
@@ -77,90 +94,116 @@ class CloudFlowLogAgent:
         self.flow_queue: Optional[asyncio.Queue] = None
         self._poll_task: Optional[asyncio.Task] = None
 
-        self._aws_client = None
-        self._azure_client = None
-        self._gcp_client = None
+        self._aws_client: Any = None
+        self._azure_client: Any = None
+        self._gcp_client: Any = None
 
         self._aws_stream_tokens: Dict[str, str] = {}
 
-        self.stats = {
+        self.stats: Dict[str, Any] = {
             'flows_processed': 0,
             'flows_dropped': 0,
             'api_errors': 0,
             'last_successful_poll': None,
         }
 
-        logger.info(f"CloudFlowLogAgent initialized for provider: {config.provider.value}")
+        logger.info(f"CloudFlowLogAgent initialised for provider: {config.provider.value}")
 
-    def _get_aws_client(self):
-        """Lazy-load AWS client"""
+    # ------------------------------------------------------------------
+    # Lazy client initialisation
+    # ------------------------------------------------------------------
+
+    def _get_aws_client(self) -> Any:
+        """Lazy-load synchronous AWS CloudWatch Logs client (boto3)."""
         if self._aws_client is None:
             try:
-                import boto3
+                import boto3  # type: ignore
                 self._aws_client = boto3.client('logs', region_name=self.config.region)
-                logger.info("AWS CloudWatch Logs client initialized")
+                logger.info("AWS CloudWatch Logs client initialised")
             except ImportError:
-                logger.error("boto3 not installed. Install with: pip install boto3")
+                logger.error("boto3 not installed.  Install with: pip install boto3")
                 raise
-            except Exception as e:
-                logger.error(f"Failed to initialize AWS client: {e}")
+            except Exception as exc:
+                logger.error(f"Failed to initialise AWS client: {exc}")
                 raise
         return self._aws_client
 
-    def _get_azure_client(self):
-        """Lazy-load Azure client"""
+    def _get_azure_client(self) -> Any:
+        """Lazy-load Azure NetworkManagementClient."""
         if self._azure_client is None:
             try:
-                from azure.mgmt.network import NetworkManagementClient
-                from azure.identity import DefaultAzureCredential
+                from azure.mgmt.network import NetworkManagementClient  # type: ignore
+                from azure.identity import DefaultAzureCredential  # type: ignore
 
                 credential = DefaultAzureCredential()
                 self._azure_client = NetworkManagementClient(
                     credential=credential,
                     subscription_id=self.config.azure_subscription_id,
                 )
-                logger.info("Azure Network client initialized")
+                logger.info("Azure Network client initialised")
             except ImportError:
-                logger.error("Azure SDK not installed. Install with: pip install azure-mgmt-network azure-identity")
+                logger.error(
+                    "Azure SDK not installed.  "
+                    "Install with: pip install azure-mgmt-network azure-identity"
+                )
                 raise
-            except Exception as e:
-                logger.error(f"Failed to initialize Azure client: {e}")
+            except Exception as exc:
+                logger.error(f"Failed to initialise Azure client: {exc}")
                 raise
         return self._azure_client
 
-    def _get_gcp_client(self):
-        """Lazy-load GCP client"""
+    def _get_gcp_client(self) -> Any:
+        """Lazy-load GCP Logging client."""
         if self._gcp_client is None:
             try:
-                from google.cloud import logging as gcp_logging
+                from google.cloud import logging as gcp_logging  # type: ignore
+
                 self._gcp_client = gcp_logging.Client(project=self.config.gcp_project_id)
-                logger.info("GCP Logging client initialized")
+                logger.info("GCP Logging client initialised")
             except ImportError:
-                logger.error("Google Cloud SDK not installed. Install with: pip install google-cloud-logging")
+                logger.error(
+                    "Google Cloud SDK not installed.  "
+                    "Install with: pip install google-cloud-logging"
+                )
                 raise
-            except Exception as e:
-                logger.error(f"Failed to initialize GCP client: {e}")
+            except Exception as exc:
+                logger.error(f"Failed to initialise GCP client: {exc}")
                 raise
         return self._gcp_client
 
-    async def _poll_aws_flow_logs(self):
-        """Poll AWS VPC Flow Logs from CloudWatch Logs"""
+    # ------------------------------------------------------------------
+    # AWS polling
+    # ------------------------------------------------------------------
+
+    async def _poll_aws_flow_logs(self) -> None:
+        """
+        Poll AWS VPC Flow Logs from CloudWatch Logs.
+
+        FIX BUG-15: boto3 is synchronous and must not be called directly from
+        an async coroutine — it blocks the entire event loop.  All blocking
+        boto3 calls are now offloaded to a thread-pool executor.
+        """
+        loop = asyncio.get_running_loop()
         client = self._get_aws_client()
 
         for log_group in self.config.aws_log_group_names:
             try:
-                streams_response = client.describe_log_streams(
-                    logGroupName=log_group,
-                    orderBy='LastEventTime',
-                    descending=True,
-                    limit=10,
+                # Blocking boto3 call → run in executor
+                streams_response = await loop.run_in_executor(
+                    None,
+                    lambda lg=log_group: client.describe_log_streams(
+                        logGroupName=lg,
+                        orderBy='LastEventTime',
+                        descending=True,
+                        limit=10,
+                    ),
                 )
 
                 for stream in streams_response.get('logStreams', []):
                     stream_name = stream['logStreamName']
                     stream_key = f"{log_group}/{stream_name}"
 
-                    kwargs = {
+                    kwargs: Dict[str, Any] = {
                         'logGroupName': log_group,
                         'logStreamName': stream_name,
                         'startFromHead': False,
@@ -169,28 +212,43 @@ class CloudFlowLogAgent:
                     if stream_key in self._aws_stream_tokens:
                         kwargs['nextToken'] = self._aws_stream_tokens[stream_key]
 
-                    events_response = client.get_log_events(**kwargs)
+                    # Blocking boto3 call → run in executor
+                    events_response = await loop.run_in_executor(
+                        None,
+                        lambda kw=kwargs: client.get_log_events(**kw),
+                    )
 
-                    # Persist the forward token for the next poll cycle
                     next_token = events_response.get('nextForwardToken')
                     if next_token:
                         self._aws_stream_tokens[stream_key] = next_token
 
                     for event in events_response.get('events', []):
-                        flow = self._parse_aws_flow_log(event['message'], event['timestamp'])
-                        if flow:
+                        flow = self._parse_aws_flow_log(
+                            event['message'], event['timestamp']
+                        )
+                        if flow and self.flow_queue:
                             await self.flow_queue.put(flow)
                             self.stats['flows_processed'] += 1
 
-            except Exception as e:
-                logger.error(f"Error polling AWS flow logs from {log_group}: {e}")
+            except Exception as exc:
+                logger.error(f"Error polling AWS flow logs from {log_group}: {exc}")
                 self.stats['api_errors'] += 1
 
-    def _parse_aws_flow_log(self, log_message: str, timestamp: int) -> Optional[Dict[str, Any]]:
+    def _parse_aws_flow_log(
+        self, log_message: str, timestamp: int
+    ) -> Optional[Dict[str, Any]]:
         """
-        Parse AWS VPC Flow Log entry.
-        Format: version account-id interface-id srcaddr dstaddr srcport dstport
-                protocol packets bytes start end action log-status
+        Parse an AWS VPC Flow Log entry.
+
+        Standard format (14+ space-separated fields):
+          version account-id interface-id srcaddr dstaddr srcport dstport
+          protocol packets bytes start end action log-status
+
+        FIX BUG-13: Port fields contain "-" for ICMP (which has no ports).
+          int() on "-" raises ValueError.  Use _safe_int() with default 0.
+
+        FIX BUG-14: packets and bytes fields are also "-" for REJECT-logged
+          flows where the log-status is NODATA or SKIPDATA.  Same fix applies.
         """
         try:
             fields = log_message.strip().split()
@@ -198,41 +256,58 @@ class CloudFlowLogAgent:
                 return None
 
             return {
-                'timestamp': timestamp / 1000.0,  # Convert ms to seconds
+                'timestamp': timestamp / 1000.0,        # Convert ms → seconds
                 'source': 'aws_vpc_flow_logs',
                 'ip_src': fields[3],
                 'ip_dst': fields[4],
-                'sport': int(fields[5]),
-                'dport': int(fields[6]),
-                'protocol': int(fields[7]),
-                'packets': int(fields[8]),
-                'bytes': int(fields[9]),
+                'sport': _safe_int(fields[5], 0),       # FIX BUG-13
+                'dport': _safe_int(fields[6], 0),       # FIX BUG-13
+                'protocol': _safe_int(fields[7], 0),
+                'packets': _safe_int(fields[8], 0),     # FIX BUG-14
+                'bytes': _safe_int(fields[9], 0),       # FIX BUG-14
                 'action': fields[12],
                 'log_status': fields[13],
                 'interface_id': fields[2],
                 'account_id': fields[1],
                 'flow_direction': 'forward',
             }
-        except Exception as e:
-            logger.debug(f"Failed to parse AWS flow log: {e}")
+        except Exception as exc:
+            logger.debug(f"Failed to parse AWS flow log: {exc}")
             return None
 
-    async def _poll_azure_flow_logs(self):
-        """Poll Azure NSG Flow Logs"""
-        client = self._get_azure_client()
+    # ------------------------------------------------------------------
+    # Azure polling
+    # ------------------------------------------------------------------
+
+    async def _poll_azure_flow_logs(self) -> None:
+        """
+        Poll Azure NSG Flow Logs.
+
+        FIX BUG-16: The Azure SDK is synchronous; the client initialisation
+        and any network calls must be offloaded to an executor.
+        """
+        loop = asyncio.get_running_loop()
 
         try:
-            logger.info("Polling Azure NSG flow logs (implementation depends on storage account access)")
-            # Production implementation: read from Azure Storage blobs or
-            # Event Hubs for real-time flow logs.
+            # Initialise the client in the executor to avoid blocking the loop
+            # during the credential discovery (which may hit the network).
+            await loop.run_in_executor(None, self._get_azure_client)
+            logger.info(
+                "Polling Azure NSG flow logs "
+                "(production implementation reads from Azure Storage / Event Hubs)"
+            )
+            # Production: read blobs or Event Hub events here, offloading any
+            # blocking I/O with run_in_executor().
             await asyncio.sleep(self.config.poll_interval_seconds)
 
-        except Exception as e:
-            logger.error(f"Error polling Azure flow logs: {e}")
+        except Exception as exc:
+            logger.error(f"Error polling Azure flow logs: {exc}")
             self.stats['api_errors'] += 1
 
-    def _parse_azure_flow_log(self, log_entry: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Parse Azure NSG Flow Log entry"""
+    def _parse_azure_flow_log(
+        self, log_entry: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Parse an Azure NSG Flow Log entry."""
         try:
             raw_ts = log_entry.get('time') or log_entry.get('timestamp')
             if isinstance(raw_ts, str):
@@ -245,72 +320,95 @@ class CloudFlowLogAgent:
             protocol_str = log_entry.get('protocol', 'TCP').upper()
             protocol_num = 6 if protocol_str == 'TCP' else (17 if protocol_str == 'UDP' else 1)
 
-            flow = {
+            flow: Dict[str, Any] = {
                 'timestamp': ts,
                 'source': 'azure_nsg_flow_logs',
                 'ip_src': log_entry.get('srcIP'),
                 'ip_dst': log_entry.get('dstIP'),
-                'sport': log_entry.get('srcPort'),
-                'dport': log_entry.get('dstPort'),
+                'sport': _safe_int(log_entry.get('srcPort', 0)),
+                'dport': _safe_int(log_entry.get('dstPort', 0)),
                 'protocol': protocol_num,
-                'packets': log_entry.get('packetsSent', 0),
-                'bytes': log_entry.get('bytesSent', 0),
+                'packets': _safe_int(log_entry.get('packetsSent', 0)),
+                'bytes': _safe_int(log_entry.get('bytesSent', 0)),
                 'action': log_entry.get('flowStatus', 'ALLOWED'),
             }
             return flow if all([flow['ip_src'], flow['ip_dst']]) else None
-        except Exception as e:
-            logger.debug(f"Failed to parse Azure flow log: {e}")
+        except Exception as exc:
+            logger.debug(f"Failed to parse Azure flow log: {exc}")
             return None
 
-    async def _poll_gcp_flow_logs(self):
-        """Poll GCP VPC Flow Logs"""
+    # ------------------------------------------------------------------
+    # GCP polling
+    # ------------------------------------------------------------------
+
+    async def _poll_gcp_flow_logs(self) -> None:
+        """
+        Poll GCP VPC Flow Logs.
+
+        FIX BUG-17: client.list_entries() is a synchronous, blocking iterator
+        that can stall the event loop for hundreds of milliseconds on large
+        result sets.  Offload to run_in_executor().
+        """
+        loop = asyncio.get_running_loop()
         client = self._get_gcp_client()
+        filter_str = 'logName:"flows" AND severity>=INFO'
 
         try:
-            filter_str = 'logName:"flows" AND severity>=INFO'
-
-            for entry in client.list_entries(filter_=filter_str, max_results=self.config.batch_size):
+            # Fetch log entries without blocking the event loop
+            entries = await loop.run_in_executor(
+                None,
+                lambda: list(
+                    client.list_entries(
+                        filter_=filter_str,
+                        max_results=self.config.batch_size,
+                    )
+                ),
+            )
+            for entry in entries:
                 flow = self._parse_gcp_flow_log(entry)
-                if flow:
+                if flow and self.flow_queue:
                     await self.flow_queue.put(flow)
                     self.stats['flows_processed'] += 1
 
-        except Exception as e:
-            logger.error(f"Error polling GCP flow logs: {e}")
+        except Exception as exc:
+            logger.error(f"Error polling GCP flow logs: {exc}")
             self.stats['api_errors'] += 1
 
-    def _parse_gcp_flow_log(self, log_entry) -> Optional[Dict[str, Any]]:
-        """Parse GCP VPC Flow Log entry"""
+    def _parse_gcp_flow_log(self, log_entry: Any) -> Optional[Dict[str, Any]]:
+        """Parse a GCP VPC Flow Log entry."""
         try:
             payload = log_entry.payload
             if 'connection' not in payload:
                 return None
 
             conn = payload['connection']
-
-            protocol = int(conn.get('protocol', 17))
+            protocol = _safe_int(conn.get('protocol', 17), 17)
 
             disposition = payload.get('disposition', 'ALLOWED').upper()
-            action = 'ALLOWED' if disposition != 'DENIED' else 'DENIED'
+            action = 'DENIED' if disposition == 'DENIED' else 'ALLOWED'
 
             return {
                 'timestamp': log_entry.timestamp.timestamp(),
                 'source': 'gcp_vpc_flow_logs',
                 'ip_src': conn.get('src_ip'),
                 'ip_dst': conn.get('dest_ip'),
-                'sport': int(conn.get('src_port', 0)),
-                'dport': int(conn.get('dest_port', 0)),
+                'sport': _safe_int(conn.get('src_port', 0)),
+                'dport': _safe_int(conn.get('dest_port', 0)),
                 'protocol': protocol,
-                'packets': payload.get('packets_sent', 0),   
-                'bytes': payload.get('bytes_sent', 0),       
+                'packets': _safe_int(payload.get('packets_sent', 0)),
+                'bytes': _safe_int(payload.get('bytes_sent', 0)),
                 'action': action,
             }
-        except Exception as e:
-            logger.debug(f"Failed to parse GCP flow log: {e}")
+        except Exception as exc:
+            logger.debug(f"Failed to parse GCP flow log: {exc}")
             return None
 
-    async def _poll_loop(self):
-        """Main polling loop for cloud flow logs"""
+    # ------------------------------------------------------------------
+    # Main polling loop
+    # ------------------------------------------------------------------
+
+    async def _poll_loop(self) -> None:
+        """Main polling loop for all cloud providers."""
         logger.info(f"Starting cloud flow log collection for {self.config.provider.value}")
 
         while self.is_running:
@@ -328,36 +426,40 @@ class CloudFlowLogAgent:
                 self.stats['last_successful_poll'] = datetime.now()
                 await asyncio.sleep(self.config.poll_interval_seconds)
 
-            except Exception as e:
-                logger.error(f"Error in cloud flow log polling loop: {e}")
-                await asyncio.sleep(5)  # Back off on error
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error(f"Error in cloud flow log polling loop: {exc}")
+                await asyncio.sleep(5)   # Back off on error
 
-    async def start(self):
-        """Start flow log collection"""
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Start flow log collection."""
         self.flow_queue = asyncio.Queue(maxsize=self.config.max_queue_size)
         self.is_running = True
-
         self._poll_task = asyncio.create_task(self._poll_loop())
 
-    def stop(self):
-        """Stop flow log collection"""
+    def stop(self) -> None:
+        """Stop flow log collection."""
         logger.info("Stopping cloud flow log collection")
         self.is_running = False
         if self._poll_task:
             self._poll_task.cancel()
 
     async def get_flow(self, timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
-        """Get next flow from the queue"""
+        """Get the next flow from the internal queue."""
         if self.flow_queue is None:
             return None
-            
         try:
             return await asyncio.wait_for(self.flow_queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
             return None
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get collection statistics"""
+        """Return collection statistics."""
         return {
             **self.stats,
             'queue_size': self.flow_queue.qsize() if self.flow_queue else 0,
@@ -365,16 +467,15 @@ class CloudFlowLogAgent:
             'provider': self.config.provider.value,
         }
 
-    async def run_pipeline(self, flow_builder):
-        """Run the complete pipeline with flow builder"""
+    async def run_pipeline(self, flow_builder: Any) -> None:
+        """Run the complete agent-to-flow-builder pipeline."""
         await self.start()
 
         try:
             while self.is_running:
                 flow_dict = await self.get_flow(timeout=1.0)
                 if flow_dict and flow_builder:
-                    # Convert cloud flow to packet format for flow builder
-                    packet_format = {
+                    packet_format: Dict[str, Any] = {
                         'ip_src': flow_dict['ip_src'],
                         'ip_dst': flow_dict['ip_dst'],
                         'sport': flow_dict['sport'],
@@ -388,16 +489,23 @@ class CloudFlowLogAgent:
             self.stop()
 
 
-async def collect_cloud_flows(provider: str = "aws", duration: int = 60) -> List[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Convenience helper
+# ---------------------------------------------------------------------------
+
+async def collect_cloud_flows(
+    provider: str = "aws",
+    duration: int = 60,
+) -> List[Dict[str, Any]]:
     """
     Collect cloud flows for a specified duration.
-    
+
     Args:
-        provider: Cloud provider ('aws', 'azure', 'gcp')
-        duration: Collection duration in seconds
-    
+        provider: Cloud provider name ('aws', 'azure', 'gcp').
+        duration: Collection duration in seconds.
+
     Returns:
-        List of flow dictionaries
+        List of raw flow dictionaries.
     """
     config = CloudFlowLogConfig(
         provider=CloudProvider(provider),
@@ -410,9 +518,13 @@ async def collect_cloud_flows(provider: str = "aws", duration: int = 60) -> List
 
     await agent.start()
 
-    deadline = asyncio.get_event_loop().time() + duration
-    while asyncio.get_event_loop().time() < deadline:
-        remaining = deadline - asyncio.get_event_loop().time()
+    # FIX BUG-18: asyncio.get_event_loop() is deprecated in Python ≥3.10.
+    # Use asyncio.get_running_loop() which is always valid inside a coroutine.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + duration
+
+    while loop.time() < deadline:
+        remaining = deadline - loop.time()
         flow = await agent.get_flow(timeout=min(1.0, remaining))
         if flow:
             flows.append(flow)

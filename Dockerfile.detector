@@ -1,30 +1,30 @@
-FROM python:3.11-slim AS detector
+FROM Dockerfile.base AS runtime
 
-WORKDIR /app
-
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libpcap-dev \
-    tcpdump \
-    iptables \
+# Detector-specific runtime deps (ML + monitoring)
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Copy application code
+COPY src/ /app/src/
+COPY scripts/ /app/scripts/
+COPY config/ /app/config/
+COPY models/ /app/models/
 
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
+# Detector-specific healthcheck (pgrep process)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f 'run_detector.py' || exit 1
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/data /app/models
 
 # Create entrypoint script
-RUN echo '#!/bin/bash\n\
-python scripts/run_detector.py "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/run_detector.py "$$@"\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+EXPOSE 9091
 
 CMD []

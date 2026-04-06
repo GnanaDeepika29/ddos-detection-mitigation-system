@@ -10,15 +10,20 @@ datasources:
       timeInterval: 5s
       queryTimeout: 30s
       httpMethod: POST
-      
+
   - name: InfluxDB
     type: influxdb
     access: proxy
     url: http://influxdb:8086
     jsonData:
       version: Flux
-      organization: ddos
-      defaultBucket: metrics
-      tlsSkipVerify: true
+      # FIX: Was hardcoded "ddos" — now uses env var to match
+      # dev.yaml (ddos_dev) and prod.yaml (ddos_production) respectively.
+      # Set INFLUXDB_ORG in your container environment per deployment.
+      organization: ${INFLUXDB_ORG}
+      # FIX: Was hardcoded "metrics" — now uses env var to match
+      # dev.yaml bucket "metrics_dev" and prod.yaml bucket "metrics".
+      defaultBucket: ${INFLUXDB_BUCKET}
+      tlsSkipVerify: false
     secureJsonData:
       token: ${INFLUXDB_TOKEN}

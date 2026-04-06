@@ -5,48 +5,58 @@
 global:
   resolve_timeout: 5m
   slack_api_url: ${SLACK_WEBHOOK_URL}
-  
+
 route:
   group_by: ['alertname', 'severity']
   group_wait: 30s
   group_interval: 5m
   repeat_interval: 1h
   receiver: 'webhook'
-  
+
   routes:
     - match:
         severity: critical
       receiver: 'critical-receiver'
       continue: true
-      
+
     - match:
         severity: high
       receiver: 'webhook'
       continue: true
-      
+
     - match:
         severity: medium
+      receiver: 'webhook'
+      continue: false
+
+    # FIX: Added low-severity route for completeness (matched with dev.yaml min_severity: low)
+    - match:
+        severity: low
       receiver: 'webhook'
       continue: false
 
 receivers:
   - name: 'webhook'
     webhook_configs:
-      - url: 'http://api:8000/webhook/alert'
+      - url: 'http://api:8080/webhook/alert'
+        # FIX: Changed port 8000 → 8080 to match prod.yaml app.port
         send_resolved: true
         http_config:
           authorization:
             type: Bearer
-            credentials: '${API_API_KEY}'
-            
+            # FIX: Was '${API_API_KEY}' — doubled "API" prefix was a typo
+            credentials: '${API_KEY}'
+
   - name: 'critical-receiver'
     webhook_configs:
-      - url: 'http://api:8000/webhook/alert'
+      - url: 'http://api:8080/webhook/alert'
+        # FIX: Changed port 8000 → 8080 to match prod.yaml app.port
         send_resolved: true
         http_config:
           authorization:
             type: Bearer
-            credentials: '${API_API_KEY}'
+            # FIX: Same typo fix as above
+            credentials: '${API_KEY}'
     pagerduty_configs:
       - service_key: ${PAGERDUTY_INTEGRATION_KEY}
         severity: critical
@@ -61,9 +71,16 @@ inhibit_rules:
     target_match:
       severity: 'high'
     equal: ['alertname']
-    
+
   - source_match:
       severity: 'high'
     target_match:
       severity: 'medium'
+    equal: ['alertname']
+
+  # FIX: Added missing third inhibition tier — medium suppresses low
+  - source_match:
+      severity: 'medium'
+    target_match:
+      severity: 'low'
     equal: ['alertname']

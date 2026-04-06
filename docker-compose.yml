@@ -136,6 +136,11 @@ services:
       context: .
       dockerfile: Dockerfile.collector
     container_name: ddos-collector
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     depends_on:
       kafka:
         condition: service_healthy
@@ -183,13 +188,20 @@ services:
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-changeme-token}
       INFLUXDB_ORG: ddos
       INFLUXDB_BUCKET: metrics
-      # Matches ./models:/app/models (see volumes); train with scripts/train_model.py -o models/isolation_forest.pkl
       MODEL_PATH: /app/models/isolation_forest.pkl
       ML_MODEL_PATH_ISOLATION_FOREST: /app/models/isolation_forest.pkl
       DETECTION_WINDOW_SECONDS: 5
       DETECTION_THRESHOLD_PPS: 10000
       METRICS_PORT: "9091"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "run_detector.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    ports:
+      - "9091:9091"
     volumes:
       - ./src:/app/src
       - ./config:/app/config
@@ -231,6 +243,14 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
       METRICS_PORT: "8001"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "run_mitigation.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    ports:
+      - "8001:8001"
     volumes:
       - ./src:/app/src
       - ./config:/app/config
@@ -382,4 +402,7 @@ volumes:
   influxdb-data:
   prometheus-data:
   grafana-data:
-  elasticsearch-data: 
+  elasticsearch-data:
+  zookeeper-data:
+  kafka-data:
+

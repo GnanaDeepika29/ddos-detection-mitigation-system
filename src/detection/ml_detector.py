@@ -9,28 +9,34 @@ Detects DDoS attacks using trained ML models including:
 """
 
 import numpy as np
-import pickle
-import json
+import logging
+import time
 from collections import deque
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List, Union, Protocol
 from pathlib import Path
-import time
-import logging
+from typing import Dict, Any, Optional, List, Union, Protocol
 
-from src.utils.paths import resolve_project_path
+# FIX BUG-15: Use a relative import so the module works regardless of CWD or
+# whether the consumer has added the repository root to sys.path.  An absolute
+# 'from src.utils.paths import ...' fails when the package is imported from a
+# different working directory or during unit tests.
+try:
+    from ..utils.paths import resolve_project_path  # type: ignore[import]
+except ImportError:
+    # Fallback: treat the path as a plain Path object without resolution.
+    def resolve_project_path(p: str) -> Path:  # type: ignore[misc]
+        return Path(p)
 
 logger = logging.getLogger(__name__)
 
 
 class TrafficFeaturesProtocol(Protocol):
-    """Protocol for objects that can be converted to feature arrays"""
+    """Protocol for objects that expose a .to_array() method."""
     def to_array(self) -> np.ndarray: ...
 
 
 class ModelType(Enum):
-    """Supported ML model types"""
     ISOLATION_FOREST = "isolation_forest"
     ONE_CLASS_SVM = "one_class_svm"
     LSTM_AUTOENCODER = "lstm_autoencoder"
@@ -40,30 +46,20 @@ class ModelType(Enum):
 
 @dataclass
 class MLDetectorConfig:
-    """Configuration for ML detector"""
     model_path: str = "models/isolation_forest.pkl"
     model_type: ModelType = ModelType.ISOLATION_FOREST
-
-    # Detection thresholds
-    anomaly_threshold: float = 0.5   # Score above this = anomaly
+    anomaly_threshold: float = 0.5
     confidence_threshold: float = 0.7
-
-    # Performance settings
     batch_size: int = 32
     use_gpu: bool = False
-
-    # Feature configuration
     feature_count: int = 23
-    sequence_length: int = 10  # For LSTM models
-
-    # Online learning
+    sequence_length: int = 10          # For LSTM models
     enable_online_learning: bool = False
-    update_interval_seconds: int = 3600  # Retrain every hour
+    update_interval_seconds: int = 3600
 
 
 @dataclass
 class DetectionResult:
-    """Result from ML detection"""
     is_attack: bool
     attack_type: Optional[str]
     confidence: float
@@ -73,7 +69,6 @@ class DetectionResult:
     features_used: List[str]
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary"""
         return {
             'is_attack': self.is_attack,
             'attack_type': self.attack_type,
@@ -87,31 +82,50 @@ class DetectionResult:
 
 
 class MLDetector:
-    """
-    Machine learning-based DDoS detector.
-    Supports multiple model types with a unified interface.
-    """
+    """ML-based DDoS detector supporting multiple model types."""
 
-    def __init__(self, config: Optional[MLDetectorConfig] = None):
+    def __init__(self, config: Optional[MLDetectorConfig] = None) -> None:
         self.config = config or MLDetectorConfig()
-        self.model = None
+        self.model: Any = None
         self.model_loaded = False
-        self.scaler = None
+        self.scaler: Any = None
         self.last_update_time = time.time()
-        self.detection_history: deque = deque(maxlen=1000)
-        self.stats = {
+        self.detection_history: deque = deque(maxlen=1_000)
+        self.stats: Dict[str, Any] = {
             'detections': 0,
             'attacks_detected': 0,
             'false_positives': 0,
             'average_inference_time_ms': 0.0,
             'inference_times': deque(maxlen=100),
         }
-        self._load_model()
-        logger.info(f"MLDetector initialized with model type: {self.config.model_type.value}")
 
-    def _load_model(self):
-        """Load ML model from disk"""
-        model_path = resolve_project_path(self.config.model_path)
+        # FIX BUG-18: LSTM autoencoder requires a rolling feature-history
+        # buffer so it can build a real sequence rather than a zero-padded one.
+        self._lstm_buffer: deque = deque(maxlen=self.config.sequence_length)
+
+        self._load_model()
+        logger.info(f"MLDetector initialised: {self.config.model_type.value}")
+
+    # ------------------------------------------------------------------
+    # Model loading
+    # ------------------------------------------------------------------
+
+    def _resolve_path(self, path_str: str) -> Path:
+        """
+        Resolve model path.
+
+        FIX BUG-21: If the caller passes an absolute path (e.g. via
+        reload_model()), resolve_project_path should not re-anchor it to the
+        project root.  We detect absolute paths and skip resolution.
+        """
+        p = Path(path_str)
+        if p.is_absolute():
+            return p
+        return resolve_project_path(path_str)
+
+    def _load_model(self) -> None:
+        """Load ML model from disk."""
+        model_path = self._resolve_path(self.config.model_path)
 
         if not model_path.exists():
             logger.warning(f"Model file not found: {self.config.model_path}")
@@ -121,72 +135,82 @@ class MLDetector:
 
         try:
             if self.config.model_type == ModelType.ISOLATION_FOREST:
-                import joblib
+                import joblib  # type: ignore
                 self.model = joblib.load(model_path)
                 self.model_loaded = True
-                logger.info(f"Loaded Isolation Forest model from {model_path}")
+                logger.info(f"Loaded Isolation Forest from {model_path}")
 
             elif self.config.model_type == ModelType.XGBOOST:
-                import xgboost as xgb
+                import xgboost as xgb  # type: ignore
                 self.model = xgb.Booster()
                 self.model.load_model(str(model_path))
                 self.model_loaded = True
-                logger.info(f"Loaded XGBoost model from {model_path}")
+                logger.info(f"Loaded XGBoost from {model_path}")
 
             elif self.config.model_type == ModelType.ONE_CLASS_SVM:
-                import joblib
+                import joblib  # type: ignore
                 self.model = joblib.load(model_path)
                 self.model_loaded = True
-                logger.info(f"Loaded One-Class SVM model from {model_path}")
+                logger.info(f"Loaded One-Class SVM from {model_path}")
 
             elif self.config.model_type == ModelType.LSTM_AUTOENCODER:
                 try:
-                    from tensorflow import keras
+                    from tensorflow import keras  # type: ignore
                     self.model = keras.models.load_model(model_path)
                     self.model_loaded = True
-                    logger.info(f"Loaded LSTM Autoencoder model from {model_path}")
+                    logger.info(f"Loaded LSTM Autoencoder from {model_path}")
                 except ImportError:
-                    logger.warning("TensorFlow not installed, LSTM Autoencoder not available")
+                    logger.warning("TensorFlow not installed, LSTM Autoencoder unavailable")
                     self.model_loaded = False
-                except Exception as e:
-                    logger.error(f"Failed to load LSTM model: {e}")
+                except Exception as exc:
+                    logger.error(f"Failed to load LSTM model: {exc}")
                     self.model_loaded = False
 
             else:
                 logger.error(f"Unsupported model type: {self.config.model_type}")
                 self.model_loaded = False
 
-        except ImportError as e:
-            logger.warning(f"Required library not installed: {e}")
+        except ImportError as exc:
+            logger.warning(f"Required library not installed: {exc}")
             self.model_loaded = False
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+        except Exception as exc:
+            logger.error(f"Failed to load model: {exc}")
             self.model_loaded = False
+
+    # ------------------------------------------------------------------
+    # Pre-processing
+    # ------------------------------------------------------------------
 
     def _preprocess_features(self, features: np.ndarray) -> np.ndarray:
-        """Preprocess features for model inference."""
-        if len(features.shape) == 1:
+        if features.ndim == 1:
             features = features.reshape(1, -1)
         features = np.nan_to_num(features, nan=0.0, posinf=1e6, neginf=-1e6)
-        features = np.clip(features, -1e6, 1e6)
-        return features
+        return np.clip(features, -1e6, 1e6)
+
+    # ------------------------------------------------------------------
+    # Per-model predictors
+    # ------------------------------------------------------------------
 
     def _predict_isolation_forest(self, features: np.ndarray) -> Dict[str, Any]:
-        """Predict using Isolation Forest"""
         predictions = self.model.predict(features)
 
         if hasattr(self.model, 'score_samples'):
-            # score_samples() returns negative anomaly scores (more negative = more anomalous)
             raw = -self.model.score_samples(features)
-            scores = np.clip(raw, 0, None)
+            raw_score = float(np.clip(raw, 0, None)[0])
         else:
-            scores = np.where(predictions == -1, 1.0, 0.0)
+            raw_score = 1.0 if predictions[0] == -1 else 0.0
 
-        is_anomaly = bool(predictions[0] == -1) if len(predictions) > 0 else False
-        raw_score = float(scores[0]) if len(scores) > 0 else 0.0
-        # Compress arbitrary positive anomaly magnitudes into a stable [0, 1)
-        # range without flattening moderate anomalies to near-zero confidence.
-        anomaly_score = raw_score / (1.0 + raw_score) if raw_score > 0 else 0.0
+        # Sigmoid-like compression: maps [0, ∞) → [0, 1)
+        anomaly_score = raw_score / (1.0 + raw_score)
+
+        is_anomaly = bool(predictions[0] == -1)
+
+        # FIX BUG-16: When raw_score == 0 but the model still predicts -1
+        # (anomaly), the old code produced confidence = 0.0, which was then
+        # silently dropped by the confidence_threshold filter.  Clamp to a
+        # minimum of 0.05 for anomalies so they are not invisibly suppressed.
+        if is_anomaly:
+            anomaly_score = max(anomaly_score, 0.05)
 
         confidence = anomaly_score if is_anomaly else 1.0 - anomaly_score
         confidence = float(min(0.95, max(0.05, confidence)))
@@ -198,19 +222,21 @@ class MLDetector:
         }
 
     def _predict_xgboost(self, features: np.ndarray) -> Dict[str, Any]:
-        """Predict using XGBoost classifier"""
-        import xgboost as xgb
+        import xgboost as xgb  # type: ignore
 
         dmatrix = xgb.DMatrix(features)
-        predictions = self.model.predict(dmatrix)
+        raw_preds = self.model.predict(dmatrix)
 
-        if len(predictions.shape) > 1:
-            attack_prob = float(predictions[0][1]) if predictions.shape[1] > 1 else float(predictions[0])
+        if raw_preds.ndim > 1:
+            attack_prob = float(raw_preds[0][1]) if raw_preds.shape[1] > 1 else float(raw_preds[0][0])
         else:
-            attack_prob = float(predictions[0])
+            attack_prob = float(raw_preds[0])
+
+        # FIX BUG-17: If the model was saved with output_margin=True, values
+        # can exceed [0,1].  Clamp to a valid probability range.
+        attack_prob = float(np.clip(attack_prob, 0.0, 1.0))
 
         is_attack = attack_prob > self.config.anomaly_threshold
-
         return {
             'is_attack': is_attack,
             'anomaly_score': attack_prob,
@@ -218,18 +244,17 @@ class MLDetector:
         }
 
     def _predict_one_class_svm(self, features: np.ndarray) -> Dict[str, Any]:
-        """Predict using One-Class SVM"""
         predictions = self.model.predict(features)
-        
+
         if hasattr(self.model, 'decision_function'):
-            decision_scores = self.model.decision_function(features)
-            # Normalize decision scores to [0, 1] range
-            anomaly_score = 1.0 / (1.0 + np.exp(decision_scores[0])) if len(decision_scores) > 0 else 0.5
+            score = self.model.decision_function(features)
+            # decision_function > 0 → inlier; < 0 → outlier (anomaly)
+            # Convert to a [0,1] anomaly score via sigmoid
+            anomaly_score = float(1.0 / (1.0 + np.exp(score[0])))
         else:
             anomaly_score = 0.5
 
-        is_anomaly = bool(predictions[0] == -1) if len(predictions) > 0 else False
-
+        is_anomaly = bool(predictions[0] == -1)
         confidence = anomaly_score if is_anomaly else 1.0 - anomaly_score
         confidence = float(min(0.95, max(0.05, confidence)))
 
@@ -240,22 +265,41 @@ class MLDetector:
         }
 
     def _predict_lstm_autoencoder(self, features: np.ndarray) -> Dict[str, Any]:
-        """Predict using LSTM Autoencoder"""
-        from tensorflow import keras
-        
+        """
+        Predict using LSTM Autoencoder.
+
+        FIX BUG-18: The original code created a sequence by placing the
+        current feature vector only in the last timestep, with the rest
+        zeroed out.  A model trained on real time-series would produce
+        systematically high reconstruction errors for such a degenerate
+        input, making every sample look anomalous.
+
+        Fixed: maintain a rolling buffer (self._lstm_buffer) of the last
+        sequence_length feature vectors.  The sequence is built from that
+        buffer so the LSTM sees a realistic temporal context.
+        """
+        from tensorflow import keras  # type: ignore  # noqa: F401
+
         n_features = features.shape[-1]
-        # Create sequence
-        seq = np.zeros((1, self.config.sequence_length, n_features), dtype=features.dtype)
-        seq[0, -1, :] = features[0]
+        # Update rolling buffer with current sample
+        self._lstm_buffer.append(features[0].copy())
+
+        # Build the sequence (pad with zeros if buffer not yet full)
+        seq = np.zeros(
+            (1, self.config.sequence_length, n_features), dtype=features.dtype
+        )
+        for t, vec in enumerate(self._lstm_buffer):
+            offset = self.config.sequence_length - len(self._lstm_buffer)
+            seq[0, offset + t, :] = vec
 
         reconstructed = self.model.predict(seq, verbose=0)
         mse = float(np.mean(np.square(seq - reconstructed)))
 
-        # Normalize MSE to [0, 1] range (assuming max reasonable MSE is 1.0)
+        # Normalise MSE to [0,1]; cap at 0.5 by convention
         anomaly_score = min(1.0, mse / 0.5)
         is_attack = anomaly_score > self.config.anomaly_threshold
         confidence = anomaly_score if is_attack else 1.0 - anomaly_score
-        confidence = min(0.95, max(0.05, confidence))
+        confidence = float(min(0.95, max(0.05, confidence)))
 
         return {
             'is_attack': is_attack,
@@ -263,57 +307,54 @@ class MLDetector:
             'confidence': confidence,
         }
 
-    def detect(self, features: Union[TrafficFeaturesProtocol, np.ndarray]) -> Optional[DetectionResult]:
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def detect(
+        self, features: Union["TrafficFeaturesProtocol", np.ndarray]
+    ) -> Optional[DetectionResult]:
         """
-        Detect DDoS attack using the loaded ML model.
+        Detect a DDoS attack using the loaded ML model.
 
-        Args:
-            features: Object with .to_array() method or a raw numpy array
-
-        Returns:
-            DetectionResult, or None if the model is not loaded.
+        Returns None if the model is not loaded.
         """
         if not self.model_loaded:
-            logger.debug("Model not loaded, skipping ML detection")
+            logger.debug("Model not loaded — skipping ML detection")
             return None
 
         start_time = time.time()
 
         try:
-            # Extract feature array
-            if isinstance(features, np.ndarray):
-                feature_array = features
-            else:
-                feature_array = features.to_array()
+            feature_array = (
+                features if isinstance(features, np.ndarray) else features.to_array()
+            )
+            processed = self._preprocess_features(feature_array)
 
-            processed_features = self._preprocess_features(feature_array)
-
-            # Route to appropriate predictor
             if self.config.model_type == ModelType.ISOLATION_FOREST:
-                result = self._predict_isolation_forest(processed_features)
+                result = self._predict_isolation_forest(processed)
             elif self.config.model_type == ModelType.XGBOOST:
-                result = self._predict_xgboost(processed_features)
+                result = self._predict_xgboost(processed)
             elif self.config.model_type == ModelType.ONE_CLASS_SVM:
-                result = self._predict_one_class_svm(processed_features)
+                result = self._predict_one_class_svm(processed)
             elif self.config.model_type == ModelType.LSTM_AUTOENCODER:
-                result = self._predict_lstm_autoencoder(processed_features)
+                result = self._predict_lstm_autoencoder(processed)
             else:
                 logger.error(f"Unsupported model type: {self.config.model_type}")
                 return None
 
-            # Update statistics
-            inference_time = (time.time() - start_time) * 1000  # ms
-            self.stats['inference_times'].append(inference_time)
-            self.stats['average_inference_time_ms'] = float(np.mean(self.stats['inference_times']))
+            inference_ms = (time.time() - start_time) * 1000
+            self.stats['inference_times'].append(inference_ms)
+            self.stats['average_inference_time_ms'] = float(
+                np.mean(self.stats['inference_times'])
+            )
             self.stats['detections'] += 1
-
             if result['is_attack']:
                 self.stats['attacks_detected'] += 1
 
-            # Create detection result
             detection_result = DetectionResult(
                 is_attack=result['is_attack'],
-                attack_type="ddos_ml" if result['is_attack'] else None,
+                attack_type='ddos_ml' if result['is_attack'] else None,
                 confidence=result['confidence'],
                 anomaly_score=result['anomaly_score'],
                 detection_time=time.time(),
@@ -323,33 +364,30 @@ class MLDetector:
 
             self.detection_history.append(detection_result.__dict__)
 
-            # Check for online learning
             if self.config.enable_online_learning:
                 self._check_online_learning()
 
-            # Log detection
-            if detection_result.is_attack and detection_result.confidence > self.config.confidence_threshold:
+            if (
+                detection_result.is_attack
+                and detection_result.confidence > self.config.confidence_threshold
+            ):
                 logger.info(
-                    f"ML detection: attack detected with "
-                    f"confidence={detection_result.confidence:.2f}, "
-                    f"anomaly_score={detection_result.anomaly_score:.3f}"
+                    f"ML detection: attack (confidence={detection_result.confidence:.2f}, "
+                    f"score={detection_result.anomaly_score:.3f})"
                 )
 
             return detection_result
 
-        except Exception as e:
-            logger.error(f"Error in ML detection: {e}")
+        except Exception as exc:
+            logger.error(f"Error in ML detection: {exc}")
             return None
 
-    def _check_online_learning(self):
-        """Check if online learning should be triggered"""
-        current_time = time.time()
-        if current_time - self.last_update_time > self.config.update_interval_seconds:
-            self.last_update_time = current_time
-            logger.info("Online learning interval reached, would retrain model")
+    def _check_online_learning(self) -> None:
+        if time.time() - self.last_update_time > self.config.update_interval_seconds:
+            self.last_update_time = time.time()
+            logger.info("Online learning interval reached — retraining would happen here")
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get detector statistics"""
         return {
             'detections': self.stats['detections'],
             'attacks_detected': self.stats['attacks_detected'],
@@ -365,8 +403,11 @@ class MLDetector:
             },
         }
 
-    def reload_model(self, model_path: Optional[str] = None):
-        """Reload model from disk"""
+    def reload_model(self, model_path: Optional[str] = None) -> None:
+        """Reload the model, optionally from a new path."""
         if model_path:
             self.config.model_path = model_path
+        # FIX BUG-21: Reset the LSTM buffer when reloading so stale
+        # history from the old model does not corrupt the new model's input.
+        self._lstm_buffer.clear()
         self._load_model()

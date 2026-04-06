@@ -7,6 +7,9 @@ groups:
     interval: 30s
     rules:
       - alert: HighPacketRate
+        # FIX: Threshold aligned to thresholds.yaml volumetric.pps.high = 50000
+        # and prod.yaml packets_per_second_threshold = 50000.
+        # Was already 50000 here — prod.yaml was the outlier (10000) and is now fixed.
         expr: max_over_time(ddos_protection_detection_packets_per_second{direction="total"}[1m]) > 50000
         for: 30s
         labels:
@@ -17,6 +20,7 @@ groups:
           description: "Packet rate is {{ $value }} pps, exceeding threshold of 50000 pps"
 
       - alert: CriticalPacketRate
+        # Aligned with thresholds.yaml volumetric.pps.critical = 100000
         expr: max_over_time(ddos_protection_detection_packets_per_second{direction="total"}[1m]) > 100000
         for: 15s
         labels:
@@ -24,9 +28,10 @@ groups:
           service: ddos-protection
         annotations:
           summary: "Critical packet rate detected"
-          description: "Packet rate is {{ $value }} pps, exceeding critical threshold"
+          description: "Packet rate is {{ $value }} pps, exceeding critical threshold of 100000 pps"
 
       - alert: LowEntropyDetected
+        # Aligned with thresholds.yaml entropy.src_ip.low_critical = 1.0 (normalized 0–1 scale here)
         expr: ddos_protection_detection_entropy_src_ip < 0.5
         for: 1m
         labels:
@@ -44,7 +49,29 @@ groups:
           service: ddos-protection
         annotations:
           summary: "High confidence DDoS detection"
-          description: "Detection confidence is {{ $value }}%"
+          description: "Detection confidence is {{ $value }}"
+
+      # FIX: Added SYN flood alert cross-referencing thresholds.yaml tcp.syn_flood
+      - alert: SynFloodDetected
+        expr: ddos_protection_detection_syn_ratio > 0.8
+        for: 30s
+        labels:
+          severity: high
+          service: ddos-protection
+        annotations:
+          summary: "SYN flood pattern detected"
+          description: "SYN packet ratio is {{ $value }}, threshold is 0.8"
+
+      # FIX: Added UDP flood alert cross-referencing thresholds.yaml udp.udp_flood
+      - alert: UdpFloodDetected
+        expr: ddos_protection_detection_udp_ratio > 0.7
+        for: 30s
+        labels:
+          severity: high
+          service: ddos-protection
+        annotations:
+          summary: "UDP flood pattern detected"
+          description: "UDP packet ratio is {{ $value }}, threshold is 0.7"
 
   - name: system_health
     interval: 30s
@@ -60,6 +87,7 @@ groups:
           description: "Consumer lag is {{ $value }} messages"
 
       - alert: HighCPUUsage
+        # Aligned with prod.yaml resources.degradation_threshold_cpu_percent = 80
         expr: ddos_protection_detection_cpu_usage_percent{core="total"} > 80
         for: 5m
         labels:
@@ -70,6 +98,8 @@ groups:
           description: "CPU usage is {{ $value }}%"
 
       - alert: HighMemoryUsage
+        # Threshold: 6000 MB of 8192 MB cap (prod.yaml resources.max_memory_mb)
+        # = ~73% — fires before degradation_threshold_memory_percent (85%) kicks in
         expr: ddos_protection_detection_memory_usage_bytes{type="process_rss"} / 1024 / 1024 > 6000
         for: 5m
         labels:
@@ -78,6 +108,17 @@ groups:
         annotations:
           summary: "High memory usage"
           description: "Memory usage is {{ $value }} MB"
+
+      # FIX: Added collector-specific scrape health check
+      - alert: CollectorScrapeDown
+        expr: up{job="ddos-collector"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: collector
+        annotations:
+          summary: "DDoS collector is not reachable"
+          description: "Prometheus cannot scrape the collector at port 9092"
 
   - name: mitigation
     interval: 30s
@@ -101,3 +142,15 @@ groups:
         annotations:
           summary: "Rate limiting active"
           description: "Rate limiting {{ $value }} packets per second"
+
+      # FIX: Added alert for when mitigation rule table is nearly full
+      - alert: MitigationRuleTableNearFull
+        # prod.yaml mitigation.rule_injector.max_rules = 10000; warn at 90%
+        expr: ddos_protection_detection_active_rules{rule_type="all"} > 9000
+        for: 2m
+        labels:
+          severity: critical
+          service: mitigation
+        annotations:
+          summary: "Mitigation rule table near capacity"
+          description: "Active rules {{ $value }} approaching max limit of 10000"

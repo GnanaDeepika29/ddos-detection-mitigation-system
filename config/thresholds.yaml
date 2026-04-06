@@ -1,6 +1,10 @@
 # ============================================
 # DDoS DETECTION THRESHOLDS CONFIGURATION
 # ============================================
+# This file is the single source of truth for all threshold values.
+# prod.yaml and rules.prometheus.yml are aligned to these values.
+# NOTE: entropy values here use a 0–8 bit scale (information-theoretic);
+#       prod.yaml uses a normalized 0.0–1.0 scale — both are valid in context.
 
 version: "1.0.0"
 last_updated: "2024-01-15"
@@ -41,6 +45,8 @@ volumetric:
   pps:
     low: 10000
     medium: 25000
+    # FIX (cross-file): prod.yaml packets_per_second_threshold is now 50000
+    # and rules.prometheus.yml HighPacketRate fires at 50000 — all aligned.
     high: 50000
     critical: 100000
     per_ip_low: 2000
@@ -70,10 +76,12 @@ tcp:
   syn_flood:
     enabled: true
     syn_ratio_low: 0.7
+    # Aligned with prod.yaml threshold.syn_flood_syn_ratio = 0.8
     syn_ratio_medium: 0.8
     syn_ratio_high: 0.9
     syn_ratio_critical: 0.95
     min_rate_low: 2000
+    # Aligned with prod.yaml threshold.syn_flood_min_rate = 5000
     min_rate_medium: 5000
     min_rate_high: 10000
     min_rate_critical: 25000
@@ -88,10 +96,12 @@ udp:
   udp_flood:
     enabled: true
     udp_ratio_low: 0.6
+    # Aligned with prod.yaml threshold.udp_flood_ratio = 0.7
     udp_ratio_medium: 0.7
     udp_ratio_high: 0.8
     udp_ratio_critical: 0.9
     min_rate_low: 5000
+    # Aligned with prod.yaml threshold.udp_flood_min_rate = 10000
     min_rate_medium: 10000
     min_rate_high: 25000
     min_rate_critical: 50000
@@ -106,10 +116,12 @@ icmp:
   icmp_flood:
     enabled: true
     icmp_ratio_low: 0.4
+    # Aligned with prod.yaml threshold.icmp_flood_ratio = 0.5
     icmp_ratio_medium: 0.5
     icmp_ratio_high: 0.6
     icmp_ratio_critical: 0.7
     min_rate_low: 2000
+    # Aligned with prod.yaml threshold.icmp_flood_min_rate = 5000
     min_rate_medium: 5000
     min_rate_high: 10000
     min_rate_critical: 25000
@@ -119,6 +131,7 @@ layer7:
   http_flood:
     enabled: true
     requests_per_second_low: 500
+    # Aligned with prod.yaml threshold.http_flood_requests_per_second = 1000
     requests_per_second_medium: 1000
     requests_per_second_high: 2500
     requests_per_second_critical: 5000
@@ -146,6 +159,14 @@ entropy:
     high_warning: 4.0
     high_critical: 5.0
     window_seconds: 10
+  # FIX: Added src_port entropy config to match prod.yaml entropy_src_port_threshold = 0.6
+  src_port:
+    normal_range: [1.5, 4.5]
+    low_warning: 1.0
+    low_critical: 0.6
+    high_warning: 5.5
+    high_critical: 6.5
+    window_seconds: 10
 
 adaptive:
   enabled: true
@@ -155,13 +176,16 @@ adaptive:
     low: 1.0
     medium: 2.0
     high: 3.0
+  # Aligned with prod.yaml detection.ml.online_learning_interval_hours = 24
   seasonality_periods: [24, 168]
 
 ml_thresholds:
   isolation_forest:
+    # Aligned with prod.yaml detection.ml.anomaly_threshold = 0.5
     anomaly_threshold: 0.5
     contamination: 0.1
   xgboost:
+    # Aligned with prod.yaml detection.ml.confidence_threshold = 0.7
     probability_threshold: 0.7
     false_positive_rate_target: 0.01
   lstm_autoencoder:

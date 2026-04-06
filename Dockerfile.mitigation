@@ -1,30 +1,32 @@
-FROM python:3.11-slim AS mitigation
+FROM Dockerfile.base AS runtime
 
-WORKDIR /app
-
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies for firewall management
-RUN apt-get update && apt-get install -y \
-    iptables \
+# Mitigation-specific runtime deps
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
     nftables \
     iproute2 \
+    procps \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Copy application code
+COPY src/ /app/src/
+COPY scripts/ /app/scripts/
+COPY config/ /app/config/
+COPY models/ /app/models/
 
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
+# Mitigation-specific healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep -f 'run_mitigation.py' || exit 1
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/data
 
 # Create entrypoint script
-RUN echo '#!/bin/bash\n\
-python scripts/run_mitigation.py "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/run_mitigation.py "$$@"\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+EXPOSE 8001
 
 CMD []

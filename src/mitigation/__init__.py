@@ -1,4 +1,4 @@
-"""Mitigation Module - Automated DDoS Response Engine"""
+"""Mitigation Module — Automated DDoS Response Engine"""
 
 from .rule_injector import RuleInjector, RuleInjectorConfig, FirewallType, FirewallRule, RuleAction
 from .cloud_shield import (

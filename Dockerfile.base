@@ -1,26 +1,47 @@
-FROM python:3.11-slim AS base
+FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    libpcap-dev \
-    tcpdump \
-    iptables \
-    nftables \
-    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt
+FROM python:3.11-slim AS runtime
 
-COPY . .
+WORKDIR /app
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/data /app/models /app/config
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+# Install runtime deps (shared across services)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /root/.local /root/.local
+
+# Create dirs
+RUN mkdir -p /app/{src,scripts,config,data,logs,models} && \
+    chmod +x /app
+
+# Add to PATH
+ENV PATH=/root/.local/bin:$PATH
+
+EXPOSE 8000
+
+LABEL maintainer="ddos-system@local" \
+      version="1.0" \
+      description="DDoS System Base Image"
+
+# Generic healthcheck - override in service Dockerfiles
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD true || exit 1
+
+CMD ["sleep", "infinity"]
+

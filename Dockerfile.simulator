@@ -1,25 +1,20 @@
-FROM python:3.11-slim AS simulator
+FROM Dockerfile.base AS runtime
 
-WORKDIR /app
+# Simulator-specific - no extra deps needed
 
-ENV PYTHONPATH=/app
-ENV PYTHONUNBUFFERED=1
+# Copy application code
+COPY src/ /app/src/
+COPY scripts/ /app/scripts/
+COPY config/ /app/config/
+COPY models/ /app/models/
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libpcap-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
+# Simulator doesn't need healthcheck (one-off)
+HEALTHCHECK NONE
 
 # Create entrypoint script
-RUN echo '#!/bin/bash\n\
-python scripts/simulate_traffic.py "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/simulate_traffic.py "$$@"\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-CMD ["--target=collector", "--attack=benign"]
+CMD ["--target=collector", "--attack=benign", "--rate=1000", "--duration=60"]
