@@ -1,9 +1,56 @@
-.env
-venv/
-.venv/
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+pip-log.txt
+pip-delete-this-directory.txt
+*.egg-info/
+dist/
+build/
+
+# Testing
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter
 .ipynb_checkpoints/
+*.ipynb
+
+# Logs
+logs/
+*.log
+
+# Data & Models (keep only production)
 data/datasets/
+data/samples/
+out.txt
+models/*.meta.json
+*.pkl.meta.json
+
+# Terraform
+deployment/terraform/.terraform/
+deployment/terraform/*.tfstate*
+
+# Git
+.git/
+.gitignore

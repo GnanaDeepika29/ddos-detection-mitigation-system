@@ -1,40 +1,51 @@
-**/.git
-**/__pycache__
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-env/
 venv/
 .venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.gitignore
-README.md
-notebooks/
-tests/
-data/
-# models/
-deployment/
+env/
 
-certs/
-out.txt
-data/
-deployment/
-models/*.meta.json
+# Testing
+.pytest_cache/
+.coverage
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+logs/
+*.log
+
+# Data (excluded - use volumes)
+data/datasets/
 data/samples/
+out.txt
+
+# Terraform state
 deployment/terraform/.terraform/
-deployment/ansible/roles/
+deployment/terraform/*.tfstate*
+
+# Certs (regenerate with script)
+certs/
+
+# Environment
 .env*
-*.ipynb_checkpoints
+
+# OS
 .DS_Store
 Thumbs.db
-
