@@ -1,0 +1,100 @@
+name: 'CI/CD - DDoS Detection System'
+
+on:
+  push:
+    branches: [ 'main', 'release/*' ]
+  pull_request:
+    branches: [ 'main' ]
+
+env:
+  PYTHON_VERSION: '3.11'
+  DOCKER_IMAGE: ddos-system
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements/prod.txt
+        pip install -r requirements/dev.txt  # pytest, black, etc.
+    
+    - name: Run tests
+      run: |
+        python -m pytest tests/ -v --cov=./src --cov-report=html
+    
+    - name: Security Audit
+      run: |
+        python scripts/security_audit.py
+    
+    - name: Train models
+      run: |
+        python scripts/train_model.py --auto --output models/production/test.pkl
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Login to ECR (if AWS)
+      if: github.ref == 'refs/heads/main'
+      uses: aws-actions/amazon-ecr-login@v2
+
+    {{- foreach service in [api, collector, detector, mitigation] }}
+    - name: Build & push {{ service }}
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.{{ service }}
+        push: ${{ github.ref == 'refs/heads/main' }}
+        tags: |
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/{{ env.DOCKER_IMAGE }}/{{ service }}:latest
+          ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/{{ env.DOCKER_IMAGE }}/{{ service }}:${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+    {{- end }}
+
+  deploy-preview:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - name: Deploy preview
+      run: |
+        echo "Helm preview deployment skipped for simplicity"
+
+  deploy-prod:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+    - name: Configure AWS
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Deploy Infrastructure
+      run: |
+        cd deployment/terraform
+        terraform init
+        terraform plan -out=tfplan
+        terraform apply tfplan
+
+    - name: Deploy Helm
+      run: |
+        scripts/deploy-cloud.sh --helm-only
+

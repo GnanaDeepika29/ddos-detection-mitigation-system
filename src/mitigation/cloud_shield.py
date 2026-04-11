@@ -29,10 +29,11 @@ except ImportError:
     AZURE_AVAILABLE = False
 
 try:
-    from google.cloud import compute_v1
-    GCP_AVAILABLE = True
+    import Cloudflare
+    CLOUDFLARE_AVAILABLE = True
 except ImportError:
-    GCP_AVAILABLE = False
+    CLOUDFLARE_AVAILABLE = False
+
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,9 @@ class CloudProvider(Enum):
     AWS = "aws"
     AZURE = "azure"
     GCP = "gcp"
+    CLOUDFLARE = "cloudflare"
     NONE = "none"
+
 
 
 class ShieldAction(Enum):
@@ -76,6 +79,18 @@ class CloudShieldConfig:
 
     gcp_project_id: Optional[str] = None
     gcp_cloud_armor_policy: Optional[str] = None
+
+    cloudflare_api_token: Optional[str] = None
+    cloudflare_zone_id: Optional[str] = None
+
+
+    cloudflare_api_token: Optional[str] = None
+    cloudflare_zone_id: Optional[str] = None
+
+
+    cloudflare_api_token: Optional[str] = None
+    cloudflare_zone_id: Optional[str] = None
+
 
     auto_enable: bool = True
     # FIX BUG-44: Aligned defaults with prod.yaml values.
@@ -321,6 +336,12 @@ class AzureShield(CloudShield):
 class GCPCloudArmor(CloudShield):
     """GCP Cloud Armor implementation."""
 
+    """GCP Cloud Armor implementation."""
+
+    """GCP Cloud Armor implementation."""
+
+    """GCP Cloud Armor implementation."""
+
     def __init__(self, config: CloudShieldConfig) -> None:
         super().__init__(config)
         # FIX BUG-1 pattern: lazy init for GCP SDK too.
@@ -373,13 +394,301 @@ class GCPCloudArmor(CloudShield):
         return True
 
 
+class CloudflareShield(CloudShield):
+    """Cloudflare Shield implementation."""
+
+    def __init__(self, config: CloudShieldConfig) -> None:
+        super().__init__(config)
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        if not CLOUDFLARE_AVAILABLE:
+            logger.error(
+                "Cloudflare SDK not installed. "
+                "Install with: pip install cloudflare"
+            )
+            return None
+        try:
+            self._client = Cloudflare.Cloudflare(
+                token=self.config.cloudflare_api_token
+            )
+            logger.info("Cloudflare client initialised")
+        except Exception as exc:
+            logger.error(f"Failed to initialise Cloudflare client: {exc}")
+        return self._client
+
+    def enable_protection(self, resource_id: str) -> bool:
+        """
+        Enables "I'm Under Attack" mode for the configured zone.
+        `resource_id` is ignored as this setting is zone-wide.
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return False
+        if self._check_cooldown():
+            logger.debug("Cloudflare enable_protection skipped — in cooldown")
+            return False
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            settings = client.zones.settings.edit(
+                zone_id=zone_id,
+                items=[{"id": "security_level", "value": "under_attack"}],
+            )
+            self.status.enabled = True
+            self.status.protected_resources = [zone_id]
+            self._update_last_action()
+            logger.info(f"Cloudflare 'I'm Under Attack' mode enabled for zone {zone_id}")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to enable Cloudflare protection: {exc}")
+        return False
+
+    def disable_protection(self, resource_id: str) -> bool:
+        """
+        Sets security level back to "high" (or a pre-configured default).
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return False
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            client.zones.settings.edit(
+                zone_id=zone_id,
+                items=[{"id": "security_level", "value": "high"}],
+            )
+            self.status.enabled = False
+            logger.info(f"Cloudflare 'I'm Under Attack' mode disabled for zone {zone_id}")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to disable Cloudflare protection: {exc}")
+        return False
+
+    def get_protection_status(self, resource_id: str) -> ProtectionStatus:
+        """
+        Checks the current security level of the zone.
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return self.status
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            setting = client.zones.settings.get(zone_id=zone_id, setting_id="security_level")
+            if setting and setting.get('value') == 'under_attack':
+                self.status.enabled = True
+            else:
+                self.status.enabled = False
+            self.status.last_updated = time.time()
+        except Exception as exc:
+            logger.error(f"Failed to get Cloudflare protection status: {exc}")
+        return self.status
+
+    def update_thresholds(self, pps_threshold: int, bps_threshold: int) -> bool:
+        logger.info("Cloudflare does not use configurable thresholds for 'I'm Under Attack' mode.")
+        return True
+
+
+class CloudflareShield(CloudShield):
+    """Cloudflare Shield implementation."""
+
+    def __init__(self, config: CloudShieldConfig) -> None:
+        super().__init__(config)
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        if not CLOUDFLARE_AVAILABLE:
+            logger.error(
+                "Cloudflare SDK not installed. "
+                "Install with: pip install cloudflare"
+            )
+            return None
+        try:
+            self._client = Cloudflare.Cloudflare(
+                token=self.config.cloudflare_api_token
+            )
+            logger.info("Cloudflare client initialised")
+        except Exception as exc:
+            logger.error(f"Failed to initialise Cloudflare client: {exc}")
+        return self._client
+
+    def enable_protection(self, resource_id: str) -> bool:
+        """
+        Enables "I'm Under Attack" mode for the configured zone.
+        `resource_id` is ignored as this setting is zone-wide.
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return False
+        if self._check_cooldown():
+            logger.debug("Cloudflare enable_protection skipped — in cooldown")
+            return False
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            settings = client.zones.settings.edit(
+                zone_id=zone_id,
+                items=[{"id": "security_level", "value": "under_attack"}],
+            )
+            self.status.enabled = True
+            self.status.protected_resources = [zone_id]
+            self._update_last_action()
+            logger.info(f"Cloudflare 'I'm Under Attack' mode enabled for zone {zone_id}")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to enable Cloudflare protection: {exc}")
+        return False
+
+    def disable_protection(self, resource_id: str) -> bool:
+        """
+        Sets security level back to "high" (or a pre-configured default).
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return False
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            client.zones.settings.edit(
+                zone_id=zone_id,
+                items=[{"id": "security_level", "value": "high"}],
+            )
+            self.status.enabled = False
+            logger.info(f"Cloudflare 'I'm Under Attack' mode disabled for zone {zone_id}")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to disable Cloudflare protection: {exc}")
+        return False
+
+    def get_protection_status(self, resource_id: str) -> ProtectionStatus:
+        """
+        Checks the current security level of the zone.
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return self.status
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            setting = client.zones.settings.get(zone_id=zone_id, setting_id="security_level")
+            if setting and setting.get('value') == 'under_attack':
+                self.status.enabled = True
+            else:
+                self.status.enabled = False
+            self.status.last_updated = time.time()
+        except Exception as exc:
+            logger.error(f"Failed to get Cloudflare protection status: {exc}")
+        return self.status
+
+    def update_thresholds(self, pps_threshold: int, bps_threshold: int) -> bool:
+        logger.info("Cloudflare does not use configurable thresholds for 'I'm Under Attack' mode.")
+        return True
+
+
+class CloudflareShield(CloudShield):
+    """Cloudflare Shield implementation."""
+
+    def __init__(self, config: CloudShieldConfig) -> None:
+        super().__init__(config)
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is not None:
+            return self._client
+        if not CLOUDFLARE_AVAILABLE:
+            logger.error(
+                "Cloudflare SDK not installed. "
+                "Install with: pip install cloudflare"
+            )
+            return None
+        try:
+            self._client = Cloudflare.Cloudflare(
+                token=self.config.cloudflare_api_token
+            )
+            logger.info("Cloudflare client initialised")
+        except Exception as exc:
+            logger.error(f"Failed to initialise Cloudflare client: {exc}")
+        return self._client
+
+    def enable_protection(self, resource_id: str) -> bool:
+        """
+        Enables "I'm Under Attack" mode for the configured zone.
+        `resource_id` is ignored as this setting is zone-wide.
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return False
+        if self._check_cooldown():
+            logger.debug("Cloudflare enable_protection skipped — in cooldown")
+            return False
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            settings = client.zones.settings.edit(
+                zone_id=zone_id,
+                items=[{"id": "security_level", "value": "under_attack"}],
+            )
+            self.status.enabled = True
+            self.status.protected_resources = [zone_id]
+            self._update_last_action()
+            logger.info(f"Cloudflare 'I'm Under Attack' mode enabled for zone {zone_id}")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to enable Cloudflare protection: {exc}")
+        return False
+
+    def disable_protection(self, resource_id: str) -> bool:
+        """
+        Sets security level back to "high" (or a pre-configured default).
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return False
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            client.zones.settings.edit(
+                zone_id=zone_id,
+                items=[{"id": "security_level", "value": "high"}],
+            )
+            self.status.enabled = False
+            logger.info(f"Cloudflare 'I'm Under Attack' mode disabled for zone {zone_id}")
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to disable Cloudflare protection: {exc}")
+        return False
+
+    def get_protection_status(self, resource_id: str) -> ProtectionStatus:
+        """
+        Checks the current security level of the zone.
+        """
+        client = self._get_client()
+        if not client or not self.config.cloudflare_zone_id:
+            return self.status
+        try:
+            zone_id = self.config.cloudflare_zone_id
+            setting = client.zones.settings.get(zone_id=zone_id, setting_id="security_level")
+            if setting and setting.get('value') == 'under_attack':
+                self.status.enabled = True
+            else:
+                self.status.enabled = False
+            self.status.last_updated = time.time()
+        except Exception as exc:
+            logger.error(f"Failed to get Cloudflare protection status: {exc}")
+        return self.status
+
+    def update_thresholds(self, pps_threshold: int, bps_threshold: int) -> bool:
+        logger.info("Cloudflare does not use configurable thresholds for 'I'm Under Attack' mode.")
+        return True
+
+
 class NoOpShield(CloudShield):
     """
     No-op implementation for local / test environments.
 
+
+
+
     FIX BUG-6: The original class had no __init__, so CloudShield.__init__
     was never called.  self.status, self.last_action_time, and the startup log
-    were missing → AttributeError on get_stats() and _check_cooldown().
+    were missing - AttributeError on get_stats() and _check_cooldown().
     """
 
     def __init__(self, config: CloudShieldConfig) -> None:
@@ -408,4 +717,6 @@ def create_cloud_shield(config: CloudShieldConfig) -> CloudShield:
         return AzureShield(config)
     if config.provider == CloudProvider.GCP:
         return GCPCloudArmor(config)
+    if config.provider == CloudProvider.CLOUDFLARE:
+        return CloudflareShield(config)
     return NoOpShield(config)

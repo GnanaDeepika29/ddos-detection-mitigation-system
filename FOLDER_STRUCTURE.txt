@@ -1,0 +1,134 @@
+# DDoS Detection & Mitigation System - Folder Structure (Tree View)
+
+Updated: Current project structure based on latest file scan. Includes all directories, key files, and organization notes.
+
+## Mermaid Folder Mindmap (Visual Architecture)
+
+```mermaid
+mindmap
+  root((DDoS System))
+    Root
+      docker-compose*.yml
+      Dockerfile*
+      README.md
+      ARCHITECTURE.md
+      FOLDER_STRUCTURE.txt
+      TODO.md
+      requirements/
+    certs(TLS)
+      kafka
+      redis
+      zookeeper
+    config(Monitoring/ML)
+      prometheus.yml
+      grafana/
+      thresholds.yaml
+      dev.yaml
+    data(Datasets)
+      samples/
+      processed/
+    models(ML Models)
+      isolation_forest*.pkl
+      xgboost*.pkl
+      production/
+    src(Core Microservices)
+      api(FastAPI)
+      collector(pcap/flow)
+      detection(ML/ensemble)
+      mitigation(rate_limit/shield)
+      streaming(Kafka)
+      monitoring(Prometheus)
+      utils(config/logger)
+    deployment(Cloud/K8s)
+      ansible/
+      helm/
+      kubernetes/
+      terraform/
+    scripts(Automation)
+      train_model.py
+      simulate_traffic.py
+    tests(Unit/Integration)
+    notebooks(EDA/Training)
+```
+
+## Detailed Text Tree
+
+```
+d:/ddos-detection-mitigation-system/
+├── Root Config & Docker
+│   ├── .dockerignore
+│   ├── .gitignore
+│   ├── ARCHITECTURE.md
+│   ├── deploy.sh
+│   ├── docker-compose*.yml (prod, tls, alertmanager)
+│   ├── Dockerfile.* (api, collector, detector, mitigation, base)
+│   ├── requirements/ (*.txt: api, base, collector, ml, prod)
+│   ├── sitecustomize.py
+│   └── FOLDER_STRUCTURE.txt
+├── certs/ (TLS for secure services)
+│   ├── ca.*
+│   ├── kafka* (.crt, .key, .jks, .p12, .keystore, .truststore)
+│   ├── redis*
+│   └── zookeeper*
+├── config/ (Observability & Thresholds)
+│   ├── alertmanager.yml
+│   ├── dev.yaml, prod.yaml
+│   ├── logstash.conf
+│   ├── prometheus.yml, rules.prometheus.yml
+│   ├── thresholds.yaml
+│   └── grafana/provisioning/ (dashboards.yaml, datasources.yaml)
+├── data/
+│   ├── datasets/
+│   ├── processed/ (training_data.parquet, training_sample.parquet)
+│   └── samples/ (sample_data.csv)
+├── deployment/
+│   ├── ansible/ (playbook.yml, *.service.j2)
+│   ├── helm/ddos-system/
+│   ├── kubernetes/ (*.yaml: deployment, service, configmap, secret)
+│   └── terraform/ (*.tf, tfvars.example)
+├── k8s/ (secrets.yml)
+├── logs/ (ddos_system.log)
+├── models/ & models/production/
+│   ├── isolation_forest* (.pkl, .meta.json, .scaler.pkl)
+│   └── xgboost_cic* (.pkl, .meta.json, .scaler.pkl)
+├── notebooks/ (eda.ipynb, model_training.ipynb)
+├── scripts/ (Deployment & Utils)
+│   ├── build_k8s_images.sh
+│   ├── deploy-cloud.sh
+│   ├── docker_up*.sh/ps1
+│   ├── generate_secrets.py
+│   ├── generate_tls_certs.sh
+│   ├── init_secure_services.sh
+│   ├── process_cicddos2019.py
+│   ├── production_ready_check.sh
+│   ├── run-*.py/sh
+│   ├── simulate_traffic.py
+│   ├── train_model.py
+│   └── train-deploy.sh
+├── src/ (Core Python Code - Microservices)
+│   ├── api/ (__init__.py, main.py - FastAPI)
+│   ├── collector/ (cloud_agent.py, flow_builder.py, packet_capture.py, traffic_collector.py)
+│   ├── compliance/ (data_retention.py)
+│   ├── detection/ (engine.py, ensemble.py, feature_extractor.py, heuristic_detector.py, ml_detector.py, threshold_detector.py)
+│   ├── health/ (ready_probes.py)
+│   ├── mitigation/ (__init__.py, cloud_shield.py, engine.py, rate_limiter.py, rule_injector.py, scrubber_redirect.py)
+│   ├── ml/ (drift_detection.py)
+│   ├── monitoring/ (__init__.py, alert_manager.py, grafana_dashboard.json, metrics_exporter.py)
+│   ├── streaming/ (__init__.py, consumer.py, producer.py, secure_client.py, window_aggregator.py)
+│   ├── utils/ (__init__.py, cloud_auth.py, config_loader.py, env_loader.py, logger.py, paths.py)
+│   └── main.py, __init__.py
+└── tests/
+    ├── conftest.py
+    ├── integration/ (test_streaming_pipeline.py)
+    └── unit/
+```
+
+## Organization Principles
+- **src/**: Modular microservices (one dir per service).
+- **Data Flow**: collector → streaming (Kafka) → detection → mitigation → monitoring.
+- **Deployment**: Docker → K8s/Helm → Terraform (AWS EKS+MSK+Redis).
+- **Security**: TLS certs, secrets mgmt, compliance module.
+
+Data Flow: Traffic Source → Collector → Kafka → Detector → Mitigation + Prometheus/Grafana/Alerts
+
+This structure supports scalable, production-grade DDoS protection.

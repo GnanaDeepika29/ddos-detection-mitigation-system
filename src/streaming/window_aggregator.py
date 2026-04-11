@@ -220,10 +220,10 @@ class WindowAggregator:
     def __init__(
         self,
         window_sizes: Optional[List[int]] = None,
-        history_size: int = 100,
+        history_size: int = 50,
         enable_rolling_stats: bool = True,
     ) -> None:
-        self.window_sizes = window_sizes or [1, 5, 10, 60]
+        self.window_sizes = window_sizes or [5, 60]
         self.history_size = history_size
         self.enable_rolling_stats = enable_rolling_stats
 
@@ -233,6 +233,7 @@ class WindowAggregator:
         self._last_flow_counters: Dict[str, Dict[str, int]] = {}
         self._active_bucket_start: Dict[int, float] = {}
         self._last_cleanup = time.time()
+        self._max_current_windows = 100
 
         for size in self.window_sizes:
             self.window_history[size] = deque(maxlen=self.history_size)

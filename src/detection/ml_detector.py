@@ -90,13 +90,13 @@ class MLDetector:
         self.model_loaded = False
         self.scaler: Any = None
         self.last_update_time = time.time()
-        self.detection_history: deque = deque(maxlen=1_000)
+        self.detection_history: deque = deque(maxlen=500)
         self.stats: Dict[str, Any] = {
             'detections': 0,
             'attacks_detected': 0,
             'false_positives': 0,
             'average_inference_time_ms': 0.0,
-            'inference_times': deque(maxlen=100),
+            'inference_times': deque(maxlen=50),
         }
 
         # FIX BUG-18: LSTM autoencoder requires a rolling feature-history

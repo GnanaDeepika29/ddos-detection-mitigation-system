@@ -1,0 +1,22 @@
+{{- if .Values.service.enabled -}}
+{{- range $name, $config := .Values.services -}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+spec:
+  type: {{ $config.type | default "ClusterIP" }}
+  ports:
+  - port: {{ $config.port | default 80 }}
+    targetPort: {{ $config.targetPort | default "http" }}
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+{{- end }}
+{{- end }}

@@ -73,6 +73,7 @@ class AlertConfig:
     max_alerts_per_minute: int = 100
     min_severity: AlertSeverity = AlertSeverity.LOW
     auto_resolve_seconds: int = 3600
+    alert_history_maxlen: int = 5000
     slack_enabled: bool = False
     slack_webhook_url: str = ""
     pagerduty_enabled: bool = False
@@ -345,11 +346,9 @@ class AlertManager:
     def __init__(self, config: Optional[AlertConfig] = None) -> None:
         self.config = config or AlertConfig()
         self.active_alerts: Dict[str, Alert] = {}
-        self.alert_history: deque = deque(maxlen=10_000)
-        self.recent_alerts: deque = deque(maxlen=1_000)
-        # FIX BUG-35: rate-limit tracking — deque of timestamps of alerts
-        # raised in the last 60 seconds.
-        self._rate_timestamps: deque = deque(maxlen=self.config.max_alerts_per_minute * 2)
+        self.alert_history: deque = deque(maxlen=5_000)
+        self.recent_alerts: deque = deque(maxlen=500)
+        self._rate_timestamps: deque = deque(maxlen=min(self.config.max_alerts_per_minute * 2, 200))
         self.providers: List[NotificationProvider] = []
         self._init_providers()
         self.stats: Dict[str, Any] = {

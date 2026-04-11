@@ -1,25 +1,33 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: ddos-system
-
 resources:
 - configmap.yaml
 - deployment.yaml
+# secret.yaml deprecated - use external-secrets
 - service.yaml
 
+namespace: ddos-system
+
 commonLabels:
-  app.kubernetes.io/managed-by: kustomize
-  app.kubernetes.io/version: latest
+  app: ddos-detection
+  version: v1.0.0
+
+patchesStrategicMerge:
+- overlays/prod/resources-patch.yaml
+- overlays/prod/secrets-patch.yaml
+- overlays/prod/ingress-patch.yaml
 
 images:
-  - name: ddos-system/collector
-    newTag: latest
-  - name: ddos-system/detector
-    newTag: latest
-  - name: ddos-system/mitigation
-    newTag: latest
-  - name: ddos-system/api
-    newTag: latest
-  - name: ddos-system/simulator
-    newTag: latest
+- name: ddos-collector
+  newName: ddos-collector
+  newTag: v1.0.0
+- name: ddos-detector
+  newName: ddos-detector
+  newTag: v1.0.0
+- name: ddos-mitigation
+  newName: ddos-mitigation
+  newTag: v1.0.0
+- name: ddos-api
+  newName: ddos-api
+  newTag: v1.0.0

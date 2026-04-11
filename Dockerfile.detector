@@ -1,7 +1,36 @@
-FROM Dockerfile.base AS runtime
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements/base.txt requirements/ml.txt ./requirements/
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefer-binary -r requirements/base.txt -r requirements/ml.txt
+
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+# Install runtime deps (shared across services)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local /usr/local
+
+# Add to PATH
+ENV PATH=/usr/local/bin:${PATH}
 
 # Detector-specific runtime deps (ML + monitoring)
-USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     && rm -rf /var/lib/apt/lists/*
@@ -16,15 +45,22 @@ COPY models/ /app/models/
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD pgrep -f 'run_detector.py' || exit 1
 
-# Create necessary directories
-RUN mkdir -p /app/logs /app/data /app/models
+# Create dirs, entrypoint, permissions, switch user (FIX: entrypoint before chown/chmod)
+RUN mkdir -p /app/logs /app/data /app/models && \
+    printf '#!/bin/bash\nset -e\nexec python /app/scripts/run_detector.py "$$@"\n' > /entrypoint.sh && \
+    chmod +x /entrypoint.sh && \
+    addgroup --gid 1000 ddos && \
+    adduser --uid 1000 --ingroup ddos --disabled-password --gecos "" ddos && \
+    chown -R ddos:ddos /app
 
-# Create entrypoint script
-RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/run_detector.py "$$@"\n' > /entrypoint.sh && \
-    chmod +x /entrypoint.sh
+USER ddos
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
 
 ENTRYPOINT ["/entrypoint.sh"]
 
 EXPOSE 9091
 
 CMD []
+

@@ -53,16 +53,6 @@ class FlowKey:
             and self.protocol == other.protocol
         )
 
-    def get_reverse(self) -> "FlowKey":
-        """Return the reverse-direction flow key."""
-        return FlowKey(
-            ip_src=self.ip_dst,
-            ip_dst=self.ip_src,
-            sport=self.dport,
-            dport=self.sport,
-            protocol=self.protocol,
-        )
-
 
 @dataclass
 class FlowStats:
@@ -240,11 +230,28 @@ class Flow:
 
     @staticmethod
     def _calculate_std(values: List[float]) -> float:
-        """Population standard deviation."""
+        """
+        Calculates population standard deviation using Welford's online algorithm
+        for better numerical stability.
+        """
         if not values:
             return 0.0
-        mean = sum(values) / len(values)
-        variance = sum((x - mean) ** 2 for x in values) / len(values)
+        
+        n = 0
+        mean = 0.0
+        m2 = 0.0
+
+        for x in values:
+            n += 1
+            delta = x - mean
+            mean += delta / n
+            delta2 = x - mean
+            m2 += delta * delta2
+
+        if n < 2:
+            return 0.0
+
+        variance = m2 / n
         return variance ** 0.5
 
     def get_flow_id(self) -> str:
@@ -275,6 +282,7 @@ class FlowBuilder:
         self.active_timeout = active_timeout
         self.max_flows = max_flows
         self.flows: Dict[FlowKey, Flow] = {}
+        self._flow_lru: List[Tuple[float, FlowKey]] = []
         self.exported_flows: deque = deque(maxlen=10_000)
         self.last_processed_flow: Optional[Flow] = None
         self._cleanup_interval = min(self.idle_timeout, 10)
@@ -320,10 +328,17 @@ class FlowBuilder:
                 if len(self.flows) > self.max_flows:
                     self._evict_oldest_flows()
 
+                # Add to LRU tracking
+                heapq.heappush(self._flow_lru, (flow.stats.last_seen, key))
+
             # Determine packet direction relative to the stored flow key.
             reverse = (ip_src != flow.key.ip_src or sport != flow.key.sport)
 
             flow.stats.update(packet, reverse)
+
+            # Update LRU tracking
+            heapq.heappush(self._flow_lru, (flow.stats.last_seen, key))
+
             self.last_processed_flow = flow
 
             # Periodic idle-flow cleanup
@@ -377,17 +392,22 @@ class FlowBuilder:
             logger.debug(f"Cleaned up {len(stale)} idle flows")
 
     def _evict_oldest_flows(self) -> None:
-        """LRU-evict 10 % of flows when the max-flows limit is breached."""
-        if not self.flows:
+        """LRU-evict 10% of flows when the max-flows limit is breached."""
+        if not self._flow_lru:
             return
+        
         evict_count = max(1, int(self.max_flows * 0.1))
-        oldest = heapq.nsmallest(
-            evict_count,
-            self.flows.items(),
-            key=lambda kv: kv[1].stats.last_seen,
-        )
-        for key, _ in oldest:
+        
+        # Prune the LRU heap to remove stale entries
+        while self._flow_lru and self._flow_lru[0][1] not in self.flows:
+            heapq.heappop(self._flow_lru)
+
+        for _ in range(evict_count):
+            if not self._flow_lru:
+                break
+            _, key = heapq.heappop(self._flow_lru)
             self._export_flow(key)
+            
         logger.warning(f"Evicted {evict_count} oldest flows (max_flows limit reached)")
 
     def get_stats(self) -> Dict[str, Any]:

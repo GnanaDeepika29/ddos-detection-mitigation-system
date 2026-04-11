@@ -17,6 +17,12 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+class FlowParseException(ValueError):
+    """Custom exception for flow parsing errors."""
+    pass
+
+
+
 class CloudProvider(Enum):
     """Supported cloud providers"""
     AWS = "aws"
@@ -250,30 +256,27 @@ class CloudFlowLogAgent:
         FIX BUG-14: packets and bytes fields are also "-" for REJECT-logged
           flows where the log-status is NODATA or SKIPDATA.  Same fix applies.
         """
-        try:
-            fields = log_message.strip().split()
-            if len(fields) < 14:
-                return None
+        fields = log_message.strip().split()
+        if len(fields) < 14:
+            raise FlowParseException(f"Invalid AWS flow log format: {len(fields)} fields")
 
-            return {
-                'timestamp': timestamp / 1000.0,        # Convert ms → seconds
-                'source': 'aws_vpc_flow_logs',
-                'ip_src': fields[3],
-                'ip_dst': fields[4],
-                'sport': _safe_int(fields[5], 0),       # FIX BUG-13
-                'dport': _safe_int(fields[6], 0),       # FIX BUG-13
-                'protocol': _safe_int(fields[7], 0),
-                'packets': _safe_int(fields[8], 0),     # FIX BUG-14
-                'bytes': _safe_int(fields[9], 0),       # FIX BUG-14
-                'action': fields[12],
-                'log_status': fields[13],
-                'interface_id': fields[2],
-                'account_id': fields[1],
-                'flow_direction': 'forward',
-            }
-        except Exception as exc:
-            logger.debug(f"Failed to parse AWS flow log: {exc}")
-            return None
+        return {
+            'timestamp': timestamp / 1000.0,        # Convert ms → seconds
+            'source': 'aws_vpc_flow_logs',
+            'ip_src': fields[3],
+            'ip_dst': fields[4],
+            'sport': _safe_int(fields[5], 0),       # FIX BUG-13
+            'dport': _safe_int(fields[6], 0),       # FIX BUG-13
+            'protocol': _safe_int(fields[7], 0),
+            'packets': _safe_int(fields[8], 0),     # FIX BUG-14
+            'bytes': _safe_int(fields[9], 0),       # FIX BUG-14
+            'action': fields[12],
+            'log_status': fields[13],
+            'interface_id': fields[2],
+            'account_id': fields[1],
+            'flow_direction': 'forward',
+        }
+
 
     # ------------------------------------------------------------------
     # Azure polling
@@ -308,34 +311,33 @@ class CloudFlowLogAgent:
         self, log_entry: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Parse an Azure NSG Flow Log entry."""
-        try:
-            raw_ts = log_entry.get('time') or log_entry.get('timestamp')
-            if isinstance(raw_ts, str):
-                ts = datetime.fromisoformat(raw_ts.rstrip('Z')).timestamp()
-            elif isinstance(raw_ts, (int, float)):
-                ts = float(raw_ts)
-            else:
-                ts = datetime.utcnow().timestamp()
+        raw_ts = log_entry.get('time') or log_entry.get('timestamp')
+        if isinstance(raw_ts, str):
+            ts = datetime.fromisoformat(raw_ts.rstrip('Z')).timestamp()
+        elif isinstance(raw_ts, (int, float)):
+            ts = float(raw_ts)
+        else:
+            ts = datetime.utcnow().timestamp()
 
-            protocol_str = log_entry.get('protocol', 'TCP').upper()
-            protocol_num = 6 if protocol_str == 'TCP' else (17 if protocol_str == 'UDP' else 1)
+        protocol_str = log_entry.get('protocol', 'TCP').upper()
+        protocol_num = 6 if protocol_str == 'TCP' else (17 if protocol_str == 'UDP' else 1)
 
-            flow: Dict[str, Any] = {
-                'timestamp': ts,
-                'source': 'azure_nsg_flow_logs',
-                'ip_src': log_entry.get('srcIP'),
-                'ip_dst': log_entry.get('dstIP'),
-                'sport': _safe_int(log_entry.get('srcPort', 0)),
-                'dport': _safe_int(log_entry.get('dstPort', 0)),
-                'protocol': protocol_num,
-                'packets': _safe_int(log_entry.get('packetsSent', 0)),
-                'bytes': _safe_int(log_entry.get('bytesSent', 0)),
-                'action': log_entry.get('flowStatus', 'ALLOWED'),
-            }
-            return flow if all([flow['ip_src'], flow['ip_dst']]) else None
-        except Exception as exc:
-            logger.debug(f"Failed to parse Azure flow log: {exc}")
-            return None
+        flow: Dict[str, Any] = {
+            'timestamp': ts,
+            'source': 'azure_nsg_flow_logs',
+            'ip_src': log_entry.get('srcIP'),
+            'ip_dst': log_entry.get('dstIP'),
+            'sport': _safe_int(log_entry.get('srcPort', 0)),
+            'dport': _safe_int(log_entry.get('dstPort', 0)),
+            'protocol': protocol_num,
+            'packets': _safe_int(log_entry.get('packetsSent', 0)),
+            'bytes': _safe_int(log_entry.get('bytesSent', 0)),
+            'action': log_entry.get('flowStatus', 'ALLOWED'),
+        }
+        if not all([flow['ip_src'], flow['ip_dst']]):
+            raise FlowParseException("Missing srcIP or dstIP in Azure flow log")
+        return flow
+
 
     # ------------------------------------------------------------------
     # GCP polling
@@ -376,32 +378,29 @@ class CloudFlowLogAgent:
 
     def _parse_gcp_flow_log(self, log_entry: Any) -> Optional[Dict[str, Any]]:
         """Parse a GCP VPC Flow Log entry."""
-        try:
-            payload = log_entry.payload
-            if 'connection' not in payload:
-                return None
+        payload = log_entry.payload
+        if 'connection' not in payload:
+            raise FlowParseException("Missing 'connection' in GCP flow log payload")
 
-            conn = payload['connection']
-            protocol = _safe_int(conn.get('protocol', 17), 17)
+        conn = payload['connection']
+        protocol = _safe_int(conn.get('protocol', 17), 17)
 
-            disposition = payload.get('disposition', 'ALLOWED').upper()
-            action = 'DENIED' if disposition == 'DENIED' else 'ALLOWED'
+        disposition = payload.get('disposition', 'ALLOWED').upper()
+        action = 'DENIED' if disposition == 'DENIED' else 'ALLOWED'
 
-            return {
-                'timestamp': log_entry.timestamp.timestamp(),
-                'source': 'gcp_vpc_flow_logs',
-                'ip_src': conn.get('src_ip'),
-                'ip_dst': conn.get('dest_ip'),
-                'sport': _safe_int(conn.get('src_port', 0)),
-                'dport': _safe_int(conn.get('dest_port', 0)),
-                'protocol': protocol,
-                'packets': _safe_int(payload.get('packets_sent', 0)),
-                'bytes': _safe_int(payload.get('bytes_sent', 0)),
-                'action': action,
-            }
-        except Exception as exc:
-            logger.debug(f"Failed to parse GCP flow log: {exc}")
-            return None
+        return {
+            'timestamp': log_entry.timestamp.timestamp(),
+            'source': 'gcp_vpc_flow_logs',
+            'ip_src': conn.get('src_ip'),
+            'ip_dst': conn.get('dest_ip'),
+            'sport': _safe_int(conn.get('src_port', 0)),
+            'dport': _safe_int(conn.get('dest_port', 0)),
+            'protocol': protocol,
+            'packets': _safe_int(payload.get('packets_sent', 0)),
+            'bytes': _safe_int(payload.get('bytes_sent', 0)),
+            'action': action,
+        }
+
 
     # ------------------------------------------------------------------
     # Main polling loop
@@ -493,41 +492,66 @@ class CloudFlowLogAgent:
 # Convenience helper
 # ---------------------------------------------------------------------------
 
-async def collect_cloud_flows(
-    provider: str = "aws",
-    duration: int = 60,
-) -> List[Dict[str, Any]]:
-    """
-    Collect cloud flows for a specified duration.
+if __name__ == "__main__":
+    # Example usage for testing the CloudFlowLogAgent
+    async def main():
+        logging.basicConfig(level=logging.INFO)
+        
+        # --- Configuration ---
+        # Set the provider to 'aws', 'azure', or 'gcp'
+        # Note: This example uses mock data and does not connect to a real cloud provider.
+        PROVIDER = "aws"
+        DURATION = 10 # seconds
+        
+        config = CloudFlowLogConfig(
+            provider=CloudProvider(PROVIDER),
+            poll_interval_seconds=1,
+            batch_size=10,
+            # Add mock-specific config if needed, e.g., mock log groups
+            aws_log_group_names=["/aws/vpcflow/mock-log-group"]
+        )
 
-    Args:
-        provider: Cloud provider name ('aws', 'azure', 'gcp').
-        duration: Collection duration in seconds.
+        agent = CloudFlowLogAgent(config)
 
-    Returns:
-        List of raw flow dictionaries.
-    """
-    config = CloudFlowLogConfig(
-        provider=CloudProvider(provider),
-        poll_interval_seconds=1,
-        batch_size=100,
-    )
+        # --- Mocking the cloud provider client ---
+        # This is a simplified mock. A more robust test would use a library like `moto` for AWS.
+        if PROVIDER == "aws":
+            from unittest.mock import MagicMock
+            
+            mock_boto_client = MagicMock()
+            
+            # Mock `describe_log_streams`
+            mock_boto_client.describe_log_streams.return_value = {
+                'logStreams': [{'logStreamName': 'mock-stream-1'}]
+            }
+            
+            # Mock `get_log_events` to return some sample flow logs
+            mock_boto_client.get_log_events.return_value = {
+                'events': [
+                    {
+                        'timestamp': int(time.time() * 1000),
+                        'message': "2 123456789012 eni-12345678 192.168.1.1 10.0.0.1 12345 80 6 10 1234 1622547800 1622547860 ACCEPT OK"
+                    },
+                    {
+                        'timestamp': int(time.time() * 1000),
+                        'message': "2 123456789012 eni-12345678 10.0.0.2 8.8.8.8 54321 53 17 1 60 1622547801 1622547861 ACCEPT OK"
+                    }
+                ],
+                'nextForwardToken': 'mock-token'
+            }
+            agent._get_aws_client = MagicMock(return_value=mock_boto_client)
 
-    agent = CloudFlowLogAgent(config)
-    flows: List[Dict[str, Any]] = []
+        # --- Run the agent and collect flows ---
+        print(f"Starting agent to collect '{PROVIDER}' flows for {DURATION} seconds...")
+        collected_flows = await collect_cloud_flows(provider=PROVIDER, duration=DURATION)
+        
+        print(f"\nCollected {len(collected_flows)} flows:")
+        for i, flow in enumerate(collected_flows):
+            print(f"  {i+1}: {flow}")
+            
+        # You can also run the pipeline with a mock flow builder
+        # from flow_builder import FlowBuilder
+        # flow_builder = FlowBuilder()
+        # await agent.run_pipeline(flow_builder)
 
-    await agent.start()
-
-    # FIX BUG-18: asyncio.get_event_loop() is deprecated in Python ≥3.10.
-    # Use asyncio.get_running_loop() which is always valid inside a coroutine.
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + duration
-
-    while loop.time() < deadline:
-        remaining = deadline - loop.time()
-        flow = await agent.get_flow(timeout=min(1.0, remaining))
-        if flow:
-            flows.append(flow)
-
-    agent.stop()
-    return flows
+    asyncio.run(main())

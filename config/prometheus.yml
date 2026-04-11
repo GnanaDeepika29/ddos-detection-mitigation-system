@@ -19,6 +19,7 @@ alerting:
 
 rule_files:
   - 'rules.prometheus.yml'
+  - 'config/rules.prometheus.yml'
 
 scrape_configs:
   - job_name: 'ddos-detector'
@@ -44,12 +45,22 @@ scrape_configs:
     scrape_interval: 5s
     scrape_timeout: 4s
     static_configs:
-      # FIX: collector now uses dedicated port 9092 (prod.yaml collector.metrics_port)
-      # to avoid collision with detector on 9091.
       - targets: ['collector:9092']
         labels:
           service: collector
           component: ingestion
+      - targets: ['localhost:9092']
+        labels:
+          service: collector-external
+
+  - job_name: 'ddos-api'
+    scrape_interval: 5s
+    scrape_timeout: 4s
+    static_configs:
+      - targets: ['api:8000']
+        labels:
+          service: api
+          component: control_plane
 
   - job_name: 'prometheus'
     static_configs:

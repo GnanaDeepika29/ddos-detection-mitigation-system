@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ddos-api-ingress
+spec:
+  rules:
+  - host: "ddos-api.yourdomain.com"  # Update with real domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ddos-api-service
+            port:
+              number: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ddos-collector
+spec:
+  replicas: 3
+
+

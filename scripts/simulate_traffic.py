@@ -341,9 +341,8 @@ def main():
     print(f"Duration:      {elapsed:.2f} seconds")
     print(f"Packets Sent:  {stats['packets_sent']:,}")
     print(f"Bytes Sent:    {stats['bytes_sent']:,}")
-    print(f"Average Rate:  {stats['packets_sent'] / max(elapsed, 0.001):.0f} pps")
-    print(f"Errors:        {stats['errors']}")
-    print("=" * 50)
+    logger.info(f"Average Rate:  {stats['packets_sent'] / max(elapsed, 0.001):.0f} pps")
+    logger.info(f"Errors:        {stats['errors']}")
 
     logger.info("Traffic simulation completed")
 

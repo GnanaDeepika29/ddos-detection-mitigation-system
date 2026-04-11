@@ -36,27 +36,31 @@ route:
       continue: false
 
 receivers:
+  - name: 'email-receiver'
+    email_configs:
+      - to: gnanadeepika2982004@gmail.com
+        from: ddos-alerts@example.com
+        smarthost: smtp.gmail.com:587
+        auth_username: '${GMAIL_USERNAME}'
+        auth_password: '${GMAIL_PASSWORD}'
+        html: '{{ range .Alerts }}<h2>{{ .Annotations.summary }}</h2><p>{{ .Annotations.description }}</p>{{ end }}'
   - name: 'webhook'
     webhook_configs:
-      - url: 'http://api:8080/webhook/alert'
-        # FIX: Changed port 8000 → 8080 to match prod.yaml app.port
+      - url: 'http://api:${API_PORT:-8080}/webhook/alert'
         send_resolved: true
         http_config:
           authorization:
             type: Bearer
-            # FIX: Was '${API_API_KEY}' — doubled "API" prefix was a typo
             credentials: '${API_KEY}'
 
   - name: 'critical-receiver'
-    webhook_configs:
-      - url: 'http://api:8080/webhook/alert'
-        # FIX: Changed port 8000 → 8080 to match prod.yaml app.port
-        send_resolved: true
-        http_config:
-          authorization:
-            type: Bearer
-            # FIX: Same typo fix as above
-            credentials: '${API_KEY}'
+    email_configs:
+      - to: gnanadeepika2982004@gmail.com
+        from: ddos-alerts@example.com
+        smarthost: smtp.gmail.com:587
+        auth_username: '${GMAIL_USERNAME}'
+        auth_password: '${GMAIL_PASSWORD}'
+        html: '{{ range .Alerts }}<h2>{{ .Annotations.summary }}</h2><p>{{ .Annotations.description }}</p>{{ end }}'
     pagerduty_configs:
       - service_key: ${PAGERDUTY_INTEGRATION_KEY}
         severity: critical
@@ -64,6 +68,13 @@ receivers:
       - channel: '#ddos-critical'
         title: '🚨 DDoS Critical Alert'
         text: '{{ range .Alerts }}{{ .Annotations.description }}{{ end }}'
+    webhook_configs:
+      - url: 'http://api:${API_PORT:-8080}/webhook/alert'
+        send_resolved: true
+        http_config:
+          authorization:
+            type: Bearer
+            credentials: '${API_KEY}'
 
 inhibit_rules:
   - source_match:

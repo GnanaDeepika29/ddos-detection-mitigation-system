@@ -54,11 +54,12 @@ def test_detector_service_accepts_model_path_env(monkeypatch):
 
     service = DetectorService()
 
-    assert service.ml_detector.config.model_path == "models/isolation_forest.pkl"
+    assert str(service.ml_detector.config.model_path) == str(Path("models/isolation_forest.pkl").resolve())
 
-    with patch.object(service.alert_producer, "flush", lambda: None), patch.object(
-        service.alert_producer, "stop", lambda: None
-    ):
+    with patch("scripts.run_detector.AlertSeverity") as mock_severity, \
+         patch.object(service.alert_producer, "flush", lambda: None), \
+         patch.object(service.alert_producer, "stop", lambda: None):
+        mock_severity.MEDIUM = "medium"
         service.stop()
 
 

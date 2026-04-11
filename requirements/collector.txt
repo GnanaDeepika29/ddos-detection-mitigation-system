@@ -1,0 +1,10 @@
+# Collector-specific - packet capture & flow processing
+scapy==2.5.0
+pyshark==0.6
+nfstream==6.5.4
+dpkt==1.9.8
+
+# Data processing (light)
+numpy==1.24.3
+pandas==2.0.3
+

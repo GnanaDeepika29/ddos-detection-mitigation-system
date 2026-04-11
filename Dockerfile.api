@@ -1,4 +1,34 @@
-FROM Dockerfile.base AS runtime
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements/base.txt requirements/api.txt ./requirements/
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefer-binary -r requirements/base.txt -r requirements/api.txt
+
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+# Install runtime deps (shared across services)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local /usr/local
+
+# Add to PATH
+ENV PATH=/usr/local/bin:${PATH}
 
 # Copy application code (selective - smaller image)
 COPY src/ /app/src/
@@ -6,10 +36,23 @@ COPY scripts/ /app/scripts/
 COPY config/ /app/config/
 COPY models/ /app/models/
 
+# Switch to non-root user for security (prod best practice)
+RUN addgroup --gid 1000 ddos && \
+    adduser --uid 1000 --ingroup ddos --disabled-password --gecos "" ddos && \
+    chown -R ddos:ddos /app
+USER ddos
+
 # API-specific healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 EXPOSE 8000
 
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+ARG IMAGE_TAG=latest
+LABEL org.opencontainers.image.version="${IMAGE_TAG}" \
+      org.opencontainers.image.created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      org.opencontainers.image.authors="ddos-system@local"
+
+CMD ["sh", "-c", "uvicorn src.api.main:app --host 0.0.0.0 --port 8000"]

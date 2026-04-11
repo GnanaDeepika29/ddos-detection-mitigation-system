@@ -33,7 +33,7 @@ class PacketCaptureConfig:
     """Configuration for packet capture"""
     interface: str = "eth0"
     promiscuous: bool = True
-    snaplen: int = 1518        # Maximum bytes per packet
+    snaplen: int = 65535        # Max bytes per packet (65535 is max)
     timeout: int = 1           # Packet capture timeout (seconds)
     filter_bpf: str = ""       # BPF filter (e.g., "tcp or udp")
     buffer_size_mb: int = 64   # Capture buffer size
@@ -71,7 +71,7 @@ class PacketCapture:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
         # Rate limiting
-        self.packet_timestamps: deque = deque(maxlen=1000)
+        self.packet_timestamps: deque = deque(maxlen=config.max_packets_per_second)
         self.dropped_packets = 0
 
         # Stats
@@ -105,28 +105,23 @@ class PacketCapture:
         self.stop()
 
     def _rate_limit_check(self) -> bool:
-        """
-        Check if we're exceeding the rate limit.
-        Returns True if packet should be processed, False if dropped.
-        """
+        # Check if we're exceeding the rate limit.
+        # This is a simple but effective way to shed load under high traffic.
         now = time.time()
-        self.packet_timestamps.append(now)
+        
+        # Remove timestamps older than 1 second
+        while self.packet_timestamps and self.packet_timestamps[0] < now - 1.0:
+            self.packet_timestamps.popleft()
 
-        if len(self.packet_timestamps) < 2:
-            return True
-
-        window_start = now - 1.0
-        packets_in_window = sum(1 for t in self.packet_timestamps if t >= window_start)
-
-        if packets_in_window > self.config.max_packets_per_second:
+        if len(self.packet_timestamps) >= self.config.max_packets_per_second:
             self.dropped_packets += 1
             if self.dropped_packets % 1000 == 0:
                 logger.warning(
-                    f"Rate limit exceeded: {packets_in_window} pps, "
-                    f"dropped {self.dropped_packets} packets total"
+                    f"Rate limit exceeded, dropped {self.dropped_packets} packets"
                 )
             return False
-
+        
+        self.packet_timestamps.append(now)
         return True
 
     def _process_packet(self, packet: "Packet") -> Optional[Dict[str, Any]]:
@@ -236,12 +231,10 @@ class PacketCapture:
 
     def _packet_callback(self, packet: "Packet") -> None:
         """Callback invoked for each captured packet (runs in sniffer thread)."""
-        if not self.is_running:
-            return
-
         if not self._rate_limit_check():
             self.stats['packets_dropped'] += 1
             return
+
 
         packet_info = self._process_packet(packet)
         if packet_info is None:
@@ -341,13 +334,16 @@ class PacketCapture:
 
     def _log_stats(self) -> None:
         """Log capture statistics."""
-        if not self.config.enable_stats:
+        if not self.config.enable_stats or not self.start_time:
             return
 
-        duration = (time.time() - self.start_time) if self.start_time else 1.0
-        duration = max(duration, 1e-6)  # Guard against division by zero
+        duration = time.time() - self.start_time
+        if duration < 1e-6:
+            return # Avoid division by zero if stop is called immediately
+
         pps = self.packet_count / duration
         bps = (self.byte_count * 8) / duration
+
 
         self.stats.update({
             'packets_received': self.packet_count,

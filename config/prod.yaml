@@ -11,7 +11,7 @@ app:
   port: 8080
   workers: 4
   reload: false
-  log_level: "INFO"
+  log_level: "WARNING"
   log_format: "json"
   log_file: "/var/log/ddos_system/production.log"
   log_max_size_mb: 100
@@ -239,8 +239,9 @@ monitoring:
     enable_system_metrics: true
   grafana:
     enabled: true
-    url: "https://grafana.internal.example.com"
+    url: "http://grafana.monitoring.svc.cluster.local"
     api_key: "${GRAFANA_API_KEY}"
+    # AWS ALB/GCP LB/GKE Ingress in prod
     # FIX: Added TLS cert config for HTTPS Grafana connection
     tls_ca_cert: "/etc/ssl/certs/internal-ca.pem"
     tls_skip_verify: false
@@ -248,8 +249,9 @@ monitoring:
     folder_id: 0
   influxdb:
     enabled: true
-    url: "https://influxdb.internal.example.com:8086"
+    url: "http://influxdb.monitoring.svc.cluster.local:8086"
     org: "ddos_production"
+    # AWS Timestream or GCP Cloud Monitoring in prod
     bucket: "metrics"
     token: "${INFLUXDB_TOKEN}"
     batch_size: 5000
@@ -311,9 +313,10 @@ database:
   elasticsearch:
     enabled: true
     hosts:
-      - "https://es1.internal.example.com:9200"
-      - "https://es2.internal.example.com:9200"
-      - "https://es3.internal.example.com:9200"
+      - "http://elasticsearch.logging.svc.cluster.local:9200"
+      - "http://elasticsearch.logging.svc.cluster.local:9201"
+      - "http://elasticsearch.logging.svc.cluster.local:9202"
+      # AWS OpenSearch/GCP Elasticsearch/AKS EFK in prod
     # FIX: index_prefix now matches logstash.conf pattern "ddos-logs-prod-YYYY.MM.dd"
     index_prefix: "ddos-logs-prod-"
     username: "${ELASTICSEARCH_USER}"
@@ -372,6 +375,7 @@ backup:
   enabled: true
   interval_hours: 24
   retention_days: 30
+  data_retention_days: 30
   backup_path: "/backup/ddos_system"
   s3_bucket: "${DDOS_BACKUP_S3_BUCKET}"
   backup_configs: true

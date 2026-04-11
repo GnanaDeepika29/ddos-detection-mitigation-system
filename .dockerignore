@@ -22,6 +22,12 @@ README.md
 notebooks/
 tests/
 data/
+# models/
+deployment/
+
+certs/
+out.txt
+data/
 deployment/
 models/*.meta.json
 data/samples/

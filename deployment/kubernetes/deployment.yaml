@@ -139,12 +139,17 @@ spec:
           valueFrom:
             configMapKeyRef:
               name: ddos-app-config
-              key: ML_MODEL_PATH_ISOLATION_FOREST
-        - name: ML_MODEL_PATH_ISOLATION_FOREST
+              key: ML_MODEL_PATH_XGBOOST
+        - name: ML_MODEL_PATH_XGBOOST
           valueFrom:
             configMapKeyRef:
               name: ddos-app-config
-              key: ML_MODEL_PATH_ISOLATION_FOREST
+              key: ML_MODEL_PATH_XGBOOST
+        - name: ML_MODEL_TYPE
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: ML_MODEL_TYPE
         resources:
           requests:
             memory: "2Gi"
@@ -227,9 +232,25 @@ spec:
               name: ddos-app-config
               key: KAFKA_TOPIC_ALERTS
         - name: CLOUD_PROVIDER
-          value: "aws"
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: CLOUD_PROVIDER
         - name: AWS_REGION
-          value: "us-east-1"
+          valueFrom:
+            configMapKeyRef:
+              name: ddos-app-config
+              key: AWS_REGION
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: ddos-cloud-credentials
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ddos-cloud-credentials
+              key: AWS_SECRET_ACCESS_KEY
         resources:
           requests:
             memory: "1Gi"
@@ -304,6 +325,16 @@ spec:
               key: KAFKA_BOOTSTRAP_SERVERS
         - name: API_PORT
           value: "8000"
+        - name: API_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ddos-cloud-credentials
+              key: API_API_KEY
+        - name: API_JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ddos-cloud-credentials
+              key: API_JWT_SECRET_KEY
         resources:
           requests:
             memory: "512Mi"
@@ -468,3 +499,51 @@ subjects:
 - kind: ServiceAccount
   name: ddos-mitigation-sa
   namespace: ddos-system
+---
+# Horizontal Pod Autoscaler for API
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ddos-api-hpa
+  namespace: ddos-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ddos-api
+  minReplicas: 3
+  maxReplicas: 9
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+# Horizontal Pod Autoscaler for Mitigation
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ddos-mitigation-hpa
+  namespace: ddos-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ddos-mitigation
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

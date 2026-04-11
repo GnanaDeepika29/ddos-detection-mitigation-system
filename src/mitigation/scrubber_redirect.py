@@ -37,22 +37,58 @@ class BGPFlowSpec:
     community: Optional[str] = None
     priority: int = 100
 
-    def to_flow_spec_rule(self) -> Dict[str, Any]:
-        rule: Dict[str, Any] = {'action': self.action, 'priority': self.priority}
+    def to_exabgp_command(self, announce: bool = True) -> str:
+        """Build an ExaBGP command string for this FlowSpec rule."""
+        verb = "announce" if announce else "withdraw"
+        parts = [f"flow route {verb}"]
+
+        match_parts = []
         if self.destination_prefix:
-            rule['destination_prefix'] = self.destination_prefix
+            match_parts.append(f"destination {self.destination_prefix}")
         if self.source_prefix:
-            rule['source_prefix'] = self.source_prefix
+            match_parts.append(f"source {self.source_prefix}")
+        if self.protocol:
+            match_parts.append(f"protocol [ {self.protocol} ]")
+        if self.destination_port:
+            match_parts.append(f"destination-port [ {self.destination_port} ]")
+        if self.source_port:
+            match_parts.append(f"source-port [ {self.source_port} ]")
+        
+        parts.append("match { " + " ".join(match_parts) + " }")
+
+        action_parts = []
+        if self.action == "redirect":
+            action_parts.append(f"redirect {self.redirect_next_hop}")
+        if self.community:
+            action_parts.append(f"community [ {self.community} ]")
+        
+# Add a simple traffic rate action for demonstration
+        if self.action == "rate-limit":
+            action_parts.append("traffic-rate 0") # Discard traffic
+
+        parts.append("then { " + " ".join(action_parts) + " }")
+        
+        return " ".join(parts)
+
+    def to_flow_spec_rule(self) -> Dict[str, Any]:
+        """Convert this FlowSpec to a dictionary rule for testing."""
+        rule: Dict[str, Any] = {
+            'action': self.action,
+            'destination_prefix': self.destination_prefix,
+        }
         if self.redirect_next_hop:
             rule['redirect'] = self.redirect_next_hop
-        if self.community:
-            rule['community'] = self.community
-        if self.protocol:
-            rule['protocol'] = self.protocol
-        if self.destination_port:
-            rule['destination_port'] = self.destination_port
+        if self.source_prefix:
+            rule['source_prefix'] = self.source_prefix
         if self.source_port:
             rule['source_port'] = self.source_port
+        if self.destination_port:
+            rule['destination_port'] = self.destination_port
+        if self.protocol:
+            rule['protocol'] = self.protocol
+        if self.community:
+            rule['community'] = self.community
+        rule['priority'] = self.priority
         return rule
 
 
@@ -153,7 +189,7 @@ class ScrubberRedirect(ABC):
             })
 
             logger.info(
-                f"Redirected {target_ip} → scrubber {self.config.scrubber_ipv4}"
+                f"Redirected {target_ip} to scrubber {self.config.scrubber_ipv4}"
             )
             return True
 
@@ -250,21 +286,29 @@ class BGPFlowSpecRedirect(ScrubberRedirect):
             )
 
     def inject_flow_spec(self, flow_spec: BGPFlowSpec) -> bool:
+        """Simulates injecting a FlowSpec rule by printing an ExaBGP command."""
         try:
-            rule = flow_spec.to_flow_spec_rule()
-            logger.info(f"Injecting FlowSpec: {rule}")
+            command = flow_spec.to_exabgp_command(announce=True)
+            # In a real implementation, this would be sent to a BGP daemon process.
+            print(f"BGP_COMMAND: {command}")
+            logger.info(f"Injecting FlowSpec via BGP: {command}")
             return True
         except Exception as exc:
-            logger.error(f"Failed to inject FlowSpec: {exc}")
+            logger.error(f"Failed to generate ExaBGP command: {exc}")
             return False
 
     def withdraw_flow_spec(self, flow_spec: BGPFlowSpec) -> bool:
+        """Simulates withdrawing a FlowSpec rule by printing an ExaBGP command."""
         try:
-            logger.info(f"Withdrawing FlowSpec for {flow_spec.destination_prefix}")
+            command = flow_spec.to_exabgp_command(announce=False)
+            # In a real implementation, this would be sent to a BGP daemon process.
+            print(f"BGP_COMMAND: {command}")
+            logger.info(f"Withdrawing FlowSpec via BGP: {command}")
             return True
         except Exception as exc:
-            logger.error(f"Failed to withdraw FlowSpec: {exc}")
+            logger.error(f"Failed to generate ExaBGP withdraw command: {exc}")
             return False
+
 
 
 class GREOverlayRedirect(ScrubberRedirect):
@@ -281,7 +325,7 @@ class GREOverlayRedirect(ScrubberRedirect):
         FIX BUG-20: The original used check=True on each subprocess.run
         command in sequence.  If command 1 succeeded but command 2 raised
         CalledProcessError, the tunnel interface was left orphaned (created
-        but never recorded in self.gre_tunnels → never cleaned up).
+        but never recorded in self.gre_tunnels - never cleaned up).
         Now we track partial success and attempt cleanup on failure.
         """
         tunnel_name = f"gre_scrubber_{target_ip.replace('.', '_')}"

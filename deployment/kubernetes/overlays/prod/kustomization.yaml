@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+- ../../
+
+images:
+- name: ddos-collector
+  newName: ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/ddos-collector
+  newTag: v1.0.0
+- name: ddos-detector
+  newName: ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/ddos-detector
+  newTag: v1.0.0
+- name: ddos-mitigation
+  newName: ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/ddos-mitigation
+  newTag: v1.0.0
+- name: ddos-api
+  newName: ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/ddos-api
+  newTag: v1.0.0
+
+patches:
+- path: secrets-patch.yaml
+- path: resources-patch.yaml
+- path: ingress-patch.yaml
+- path: hpa.yaml
+
+commonLabels:
+  environment: production
+
+namespace: ddos-system

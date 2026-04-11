@@ -53,10 +53,8 @@ class ThresholdConfig:
     dynamic_window_size: int = 60
     dynamic_threshold_multiplier: float = 3.0
     alert_cooldown_seconds: int = 30
-    # FIX BUG-26: Changed default from 5 to 1 so that 1-second windows
-    # (used by dev.yaml and thresholds.yaml) are not silently skipped.
     min_window_seconds: int = 1
-    max_tracked_ips: int = 100_000
+    max_tracked_ips: int = 10_000
 
 
 @dataclass
@@ -92,14 +90,12 @@ class ThresholdDetector:
 
     def __init__(self, config: Optional[ThresholdConfig] = None) -> None:
         self.config = config or ThresholdConfig()
-        self.history_packets: Deque[float] = deque(maxlen=self.config.dynamic_window_size)
-        self.history_bytes: Deque[float] = deque(maxlen=self.config.dynamic_window_size)
-        # FIX BUG-22: Separate baseline deque (never contains the current
-        # sample) so ongoing attack traffic cannot corrupt the normal baseline.
-        self._entropy_baseline: Deque[float] = deque(maxlen=self.config.dynamic_window_size)
+        self.history_packets: Deque[float] = deque(maxlen=min(self.config.dynamic_window_size, 120))
+        self.history_bytes: Deque[float] = deque(maxlen=min(self.config.dynamic_window_size, 120))
+        self._entropy_baseline: Deque[float] = deque(maxlen=min(self.config.dynamic_window_size, 120))
         self.last_alert_time: Dict[str, float] = {}
         self.ip_packet_counts: Dict[str, Deque[float]] = {}
-        self.alert_history: Deque = deque(maxlen=1_000)
+        self.alert_history: Deque = deque(maxlen=500)
         logger.info("ThresholdDetector initialised")
 
     # ------------------------------------------------------------------

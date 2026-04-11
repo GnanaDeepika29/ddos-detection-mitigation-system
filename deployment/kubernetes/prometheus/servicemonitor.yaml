@@ -1,0 +1,129 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ddos-collector
+  namespace: ddos-system
+  labels:
+    app: ddos-collector
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: ddos-collector
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - ddos-system
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ddos-detector
+  namespace: ddos-system
+  labels:
+    app: ddos-detector
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: ddos-detector
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - ddos-system
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ddos-mitigation
+  namespace: ddos-system
+  labels:
+    app: ddos-mitigation
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: ddos-mitigation
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - ddos-system
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ddos-api
+  namespace: ddos-system
+  labels:
+    app: ddos-api
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: ddos-api
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - ddos-system
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ddos-alerts
+  namespace: ddos-system
+  labels:
+    app: ddos-system
+    release: prometheus
+spec:
+  groups:
+    - name: ddos_detection.rules
+      rules:
+        - alert: DDoSAttackDetected
+          expr: ddos_detections_total > 0
+          for: 1m
+          labels:
+            severity: critical
+            team: security
+          annotations:
+            summary: "DDoS attack detected"
+            description: "Attack type: {{ $labels.attack_type }}, Confidence: {{ $value }}"
+        - alert: HighDetectionLatency
+          expr: ddos_detection_latency_seconds > 0.1
+          for: 30s
+          labels:
+            severity: warning
+          annotations:
+            summary: "High detection latency detected"
+            description: "Detection latency is {{ $value }}s, threshold is 0.1s"
+    - name: ddos_mitigation.rules
+      rules:
+        - alert: MitigationActionsHigh
+          expr: rate(ddos_mitigation_actions_total[5m]) > 10
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High number of mitigation actions"
+            description: "Rate of mitigation actions is {{ $value }}/s"
+    - name: ddos_system.health
+      rules:
+        - alert: ServiceDown
+          expr: up{job=~"ddos-.*"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "DDoS service down"
+            description: "{{ $labels.job }} has been down for more than 1 minute"

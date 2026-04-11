@@ -1,0 +1,91 @@
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 12:57:52,635", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group", "timestamp": "2026-04-10 12:57:52,636", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 12:57:52,638", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 12:57:52,639", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Loaded Isolation Forest from D:\\ddos-detection-mitigation-system\\models\\isolation_forest.pkl", "timestamp": "2026-04-10 12:58:09,711", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "MLDetector initialised: isolation_forest", "timestamp": "2026-04-10 12:58:09,711", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "FeatureExtractor initialised", "timestamp": "2026-04-10 12:58:09,713", "level": "INFO", "logger": "src.detection.feature_extractor"}
+{"message": "EnsembleDetector initialised with strategy: weighted", "timestamp": "2026-04-10 12:58:09,713", "level": "INFO", "logger": "src.detection.ensemble"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 12:58:09,716", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 12:58:09,717", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "Initialised 0 notification providers", "timestamp": "2026-04-10 12:58:09,720", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager initialised", "timestamp": "2026-04-10 12:58:09,721", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager started", "timestamp": "2026-04-10 12:58:09,724", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 13:03:22,883", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group", "timestamp": "2026-04-10 13:03:22,883", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 13:03:22,884", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 13:03:22,884", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Loaded Isolation Forest from D:\\ddos-detection-mitigation-system\\models\\isolation_forest.pkl", "timestamp": "2026-04-10 13:03:25,218", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "MLDetector initialised: isolation_forest", "timestamp": "2026-04-10 13:03:25,221", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "FeatureExtractor initialised", "timestamp": "2026-04-10 13:03:25,223", "level": "INFO", "logger": "src.detection.feature_extractor"}
+{"message": "EnsembleDetector initialised with strategy: weighted", "timestamp": "2026-04-10 13:03:25,223", "level": "INFO", "logger": "src.detection.ensemble"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 13:03:25,226", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 13:03:25,228", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "Initialised 0 notification providers", "timestamp": "2026-04-10 13:03:25,230", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager initialised", "timestamp": "2026-04-10 13:03:25,232", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager started", "timestamp": "2026-04-10 13:03:25,238", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "Starting detector service...", "timestamp": "2026-04-10 13:03:25,247", "level": "INFO", "logger": "__main__"}
+{"message": "Failed to start Kafka consumer: NoBrokersAvailable", "timestamp": "2026-04-10 13:03:27,296", "level": "ERROR", "logger": "src.streaming.consumer"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 13:04:13,127", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group", "timestamp": "2026-04-10 13:04:13,129", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 13:04:13,130", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 13:04:13,130", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Loaded Isolation Forest from D:\\ddos-detection-mitigation-system\\models\\isolation_forest.pkl", "timestamp": "2026-04-10 13:04:15,625", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "MLDetector initialised: isolation_forest", "timestamp": "2026-04-10 13:04:15,626", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "FeatureExtractor initialised", "timestamp": "2026-04-10 13:04:15,628", "level": "INFO", "logger": "src.detection.feature_extractor"}
+{"message": "EnsembleDetector initialised with strategy: weighted", "timestamp": "2026-04-10 13:04:15,630", "level": "INFO", "logger": "src.detection.ensemble"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 13:04:15,633", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 13:04:15,635", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "Initialised 0 notification providers", "timestamp": "2026-04-10 13:04:15,636", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager initialised", "timestamp": "2026-04-10 13:04:15,637", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager started", "timestamp": "2026-04-10 13:04:15,644", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "Starting detector service...", "timestamp": "2026-04-10 13:04:15,647", "level": "INFO", "logger": "__main__"}
+{"message": "Failed to start Kafka consumer: NoBrokersAvailable", "timestamp": "2026-04-10 13:04:17,709", "level": "ERROR", "logger": "src.streaming.consumer"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 13:05:54,469", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group", "timestamp": "2026-04-10 13:05:54,469", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 13:05:54,471", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 13:05:54,473", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Loaded Isolation Forest from D:\\ddos-detection-mitigation-system\\models\\isolation_forest.pkl", "timestamp": "2026-04-10 13:05:56,866", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "MLDetector initialised: isolation_forest", "timestamp": "2026-04-10 13:05:56,867", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "FeatureExtractor initialised", "timestamp": "2026-04-10 13:05:56,869", "level": "INFO", "logger": "src.detection.feature_extractor"}
+{"message": "EnsembleDetector initialised with strategy: weighted", "timestamp": "2026-04-10 13:05:56,871", "level": "INFO", "logger": "src.detection.ensemble"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 13:05:56,876", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 13:05:56,878", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "Initialised 0 notification providers", "timestamp": "2026-04-10 13:05:56,880", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager initialised", "timestamp": "2026-04-10 13:05:56,881", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager started", "timestamp": "2026-04-10 13:05:56,885", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "Starting detector service...", "timestamp": "2026-04-10 13:05:56,891", "level": "INFO", "logger": "__main__"}
+{"message": "Failed to start Kafka consumer: NoBrokersAvailable", "timestamp": "2026-04-10 13:05:58,932", "level": "ERROR", "logger": "src.streaming.consumer"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 13:08:08,628", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group", "timestamp": "2026-04-10 13:08:08,630", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 13:08:08,630", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 13:08:08,631", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Loaded Isolation Forest from D:\\ddos-detection-mitigation-system\\models\\isolation_forest.pkl", "timestamp": "2026-04-10 13:08:23,276", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "MLDetector initialised: isolation_forest", "timestamp": "2026-04-10 13:08:23,276", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "FeatureExtractor initialised", "timestamp": "2026-04-10 13:08:23,277", "level": "INFO", "logger": "src.detection.feature_extractor"}
+{"message": "EnsembleDetector initialised with strategy: weighted", "timestamp": "2026-04-10 13:08:23,277", "level": "INFO", "logger": "src.detection.ensemble"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 13:08:23,279", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 13:08:23,279", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "Initialised 0 notification providers", "timestamp": "2026-04-10 13:08:23,282", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager initialised", "timestamp": "2026-04-10 13:08:23,282", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "AlertManager started", "timestamp": "2026-04-10 13:08:23,284", "level": "INFO", "logger": "src.monitoring.alert_manager"}
+{"message": "Starting detector service...", "timestamp": "2026-04-10 13:08:23,287", "level": "INFO", "logger": "__main__"}
+{"message": "Failed to start Kafka consumer: NoBrokersAvailable", "timestamp": "2026-04-10 13:08:25,337", "level": "ERROR", "logger": "src.streaming.consumer"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 13:15:35,588", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group-prod", "timestamp": "2026-04-10 13:15:35,589", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 13:15:35,589", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 13:15:35,591", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 13:16:14,777", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowConsumer initialised for group: ddos-detection-group-prod", "timestamp": "2026-04-10 13:16:14,778", "level": "INFO", "logger": "src.streaming.consumer"}
+{"message": "WindowAggregator initialised with window sizes: [1, 5, 10, 60]", "timestamp": "2026-04-10 13:16:14,778", "level": "INFO", "logger": "src.streaming.window_aggregator"}
+{"message": "ThresholdDetector initialised", "timestamp": "2026-04-10 13:16:14,780", "level": "INFO", "logger": "src.detection.threshold_detector"}
+{"message": "Loaded Isolation Forest from D:\\ddos-detection-mitigation-system\\models\\isolation_forest.pkl", "timestamp": "2026-04-10 13:16:17,651", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "MLDetector initialised: isolation_forest", "timestamp": "2026-04-10 13:16:17,651", "level": "INFO", "logger": "src.detection.ml_detector"}
+{"message": "FeatureExtractor initialised", "timestamp": "2026-04-10 13:16:17,652", "level": "INFO", "logger": "src.detection.feature_extractor"}
+{"message": "EnsembleDetector initialised with strategy: weighted", "timestamp": "2026-04-10 13:16:17,655", "level": "INFO", "logger": "src.detection.ensemble"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 13:16:17,659", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 13:16:17,660", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "Logging initialised \u2014 level=INFO, json=True, service=ddos-protection", "timestamp": "2026-04-10 14:13:56,957", "level": "INFO", "logger": "ddos_system"}
+{"message": "FlowBuilder initialised: idle_timeout=30s, active_timeout=60s, max_flows=100000", "timestamp": "2026-04-10 14:13:56,960", "level": "INFO", "logger": "src.collector.flow_builder"}
+{"message": "FlowProducer initialised: localhost:9092", "timestamp": "2026-04-10 14:13:56,960", "level": "INFO", "logger": "src.streaming.producer"}
+{"message": "MetricsExporter initialized on port 9091", "timestamp": "2026-04-10 14:13:56,964", "level": "INFO", "logger": "src.monitoring.metrics_exporter"}

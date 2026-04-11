@@ -1,0 +1,67 @@
+# System Architecture
+
+Enhanced with Mermaid diagrams and expanded deployment details.
+
+This document provides a high-level overview of the DDoS Detection and Mitigation System's architecture. The system is designed as a modular, cloud-native platform for real-time traffic analysis and threat response.
+
+See [OVERALL_ARCHITECTURE.md](OVERALL_ARCHITECTURE.md) for visual Mermaid diagrams.
+
+## 1. High-Level Overview
+
+The system follows a microservices-based architecture, where each core component is a separate, containerized service. This design allows for independent scaling, development, and deployment of each part of the system.
+
+The primary data flow is as follows:
+1. **Traffic Collection**: Network traffic is captured and converted into a standardized flow format.
+2. **Streaming & Processing**: Flow data is published to a Kafka message bus for real-time, distributed processing.
+3. **Detection**: A detection engine consumes the flow data, analyzing it for patterns indicative of a DDoS attack using a hybrid of rule-based and machine learning models.
+4. **Mitigation**: If an attack is detected, the mitigation engine is triggered to apply countermeasures.
+5. **Monitoring & Alerting**: Full observability stack.
+
+## 2. Core Microservices
+
+### a. Collector (`src/collector/`)
+[Details from README](src/collector/README.md)
+- Packet capture → flow aggregation → Kafka `raw_flows`.
+
+### b. Detector (`src/detection/`)
+[Details from README](src/detection/README.md)
+- Hybrid: threshold + ML ensemble → `mitigation_alerts`.
+
+### c. Mitigation (`src/mitigation/`)
+[Details from README](src/mitigation/README.md)
+- Rate limit, firewall inject, cloud shield, scrubbing.
+
+### d. API (`src/api/`)
+[Details from README](src/api/README.md)
+- FastAPI control plane, health/status endpoints.
+
+## 3. Data Flow & Supporting Services
+
+```mermaid
+graph TD
+    Traffic[Traffic] --> Collector
+    Collector --> Kafka[raw_flows]
+    Kafka --> Detector
+    Detector -->|alerts| Mitigator
+    Detector --> Metrics
+    Mitigator --> Cloud[Cloud/Firewall]
+    Metrics --> Grafana
+```
+
+**Supporting Infrastructure:**
+- **Messaging**: Kafka (TLS/SASL)
+- **State**: Redis (TLS)
+- **Observability**: Prometheus, Grafana, Alertmanager, ELK
+- **ML**: Pre-trained models in `models/`
+
+## 4. Deployment (Expanded)
+
+- **Local**: `docker compose -f docker-compose.prod.yml up`
+- **Kubernetes**: `deployment/helm/ddos-system/` + `deployment/kubernetes/`
+- **Cloud Infra**: `deployment/terraform/` (AWS EKS, MSK, ElastiCache)
+- **Ansible**: `deployment/ansible/` for VM-based deploys
+- Certs in `certs/`, configs in `config/`
+
+Folder structure: [FOLDER_STRUCTURE.txt](FOLDER_STRUCTURE.txt)
+
+This architecture ensures scalability (HPA), resilience (replicas), maintainability (modular). Production-ready with security best practices.

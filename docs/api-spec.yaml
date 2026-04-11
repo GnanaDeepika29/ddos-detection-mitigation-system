@@ -1,0 +1,426 @@
+openapi: 3.0.3
+info:
+  title: DDoS Protection API
+  description: |
+    RESTful API for the Real-Time DDoS Detection and Mitigation System.
+    Provides endpoints for system health, detection status, mitigation actions, and alert management.
+  version: 1.0.0
+  contact:
+    name: Security Team
+    email: security@example.com
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.ddos.example.com
+    description: Production server
+    variables:
+      scheme:
+        default: https
+
+tags:
+  - name: Health
+    description: System health and status endpoints
+  - name: Alerts
+    description: Alert management endpoints
+  - name: Mitigation
+    description: Mitigation action endpoints
+  - name: Detection
+    description: Detection status and control endpoints
+  - name: Metrics
+    description: Prometheus metrics endpoint
+  - name: Configuration
+    description: System configuration endpoints
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: System health check
+      operationId: health
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /:
+    get:
+      tags:
+        - Health
+      summary: API information
+      operationId: root
+      responses:
+        '200':
+          description: API information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiInfo'
+
+  /webhook/alert:
+    post:
+      tags:
+        - Alerts
+      summary: Receive alerts from Prometheus Alertmanager
+      operationId: alertmanager_webhook
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                alerts:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      labels:
+                        type: object
+                      annotations:
+                        type: object
+      responses:
+        '200':
+          description: Alert received successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /alerts:
+    get:
+      tags:
+        - Alerts
+      summary: List all alerts
+      operationId: list_alerts
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [critical, high, medium, low, info]
+      responses:
+        '200':
+          description: List of alerts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Alert'
+    post:
+      tags:
+        - Alerts
+      summary: Create a new manual alert
+      operationId: create_alert
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertInput'
+      responses:
+        '200':
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '401':
+          description: Unauthorized
+
+  /mitigation/action:
+    post:
+      tags:
+        - Mitigation
+      summary: Trigger a mitigation action
+      operationId: trigger_mitigation
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MitigationActionRequest'
+      responses:
+        '200':
+          description: Mitigation action triggered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MitigationResponse'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+
+  /mitigation/actions:
+    get:
+      tags:
+        - Mitigation
+      summary: List mitigation actions
+      operationId: list_mitigation_actions
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        '200':
+          description: List of mitigation actions
+
+  /mitigation/action/{action_id}:
+    delete:
+      tags:
+        - Mitigation
+      summary: Cancel a mitigation action
+      operationId: cancel_mitigation_action
+      parameters:
+        - name: action_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Action cancelled
+
+  /detection/status:
+    get:
+      tags:
+        - Detection
+      summary: Get detection system status
+      operationId: get_detection_status
+      responses:
+        '200':
+          description: Detection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionStatusResponse'
+
+  /detection/reset:
+    post:
+      tags:
+        - Detection
+      summary: Reset detection state
+      operationId: reset_detection_state
+      responses:
+        '200':
+          description: State reset
+
+  /metrics:
+    get:
+      tags:
+        - Metrics
+      summary: Prometheus metrics endpoint
+      operationId: get_metrics
+      responses:
+        '200':
+          description: Prometheus metrics
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /config:
+    get:
+      tags:
+        - Configuration
+      summary: Get current configuration
+      operationId: get_config
+      responses:
+        '200':
+          description: Current configuration
+
+  /config/reload:
+    post:
+      tags:
+        - Configuration
+      summary: Reload configuration
+      operationId: reload_config
+      responses:
+        '200':
+          description: Configuration reloaded
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API_KEY
+    BasicAuth:
+      type: http
+      scheme: basic
+
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+        - version
+      properties:
+        status:
+          type: string
+        timestamp:
+          type: number
+        version:
+          type: string
+
+    ApiInfo:
+      type: object
+      properties:
+        service:
+          type: string
+        name:
+          type: string
+        version:
+          type: string
+        description:
+          type: string
+        endpoints:
+          type: object
+
+    AlertResponse:
+      type: object
+      properties:
+        status:
+          type: string
+        message:
+          type: string
+        alert_id:
+          type: string
+          nullable: true
+
+    AlertInput:
+      type: object
+      required:
+        - type
+        - severity
+        - confidence
+      properties:
+        type:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        source_ips:
+          type: array
+          items:
+            type: string
+        target_ips:
+          type: array
+          items:
+            type: string
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        severity:
+          type: string
+        confidence:
+          type: number
+        timestamp:
+          type: number
+
+    MitigationActionRequest:
+      type: object
+      required:
+        - action
+        - target
+      properties:
+        action:
+          type: string
+          enum: [block_ip, rate_limit, blackhole, cloud_shield]
+        target:
+          type: string
+        duration_seconds:
+          type: integer
+          default: 300
+        reason:
+          type: string
+          nullable: true
+
+    MitigationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        action_id:
+          type: string
+          nullable: true
+        message:
+          type: string
+        timestamp:
+          type: number
+
+    DetectionStatusResponse:
+      type: object
+      properties:
+        is_running:
+          type: boolean
+        active_detectors:
+          type: array
+          items:
+            type: string
+        current_alerts:
+          type: integer
+        stats:
+          type: object
+
+    Error:
+      type: object
+      required:
+        - error
+        - status_code
+        - detail
+      properties:
+        error:
+          type: boolean
+        status_code:
+          type: integer
+        detail:
+          type: string
+        timestamp:
+          type: number

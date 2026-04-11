@@ -14,7 +14,7 @@ cd certs
 if [ ! -f ca.key ]; then
     echo "Generating CA certificate..."
     openssl req -new -x509 -days ${VALIDITY_DAYS} \
-        -subj "/CN=${CA_CN}" \
+        -subj "/CN=${CA_CN}" -nodes \
         -keyout ca.key -out ca.crt
     echo "CA certificate generated."
 else
@@ -42,7 +42,9 @@ generate_service_cert() {
         -inkey ${name}.key \
         -out ${output_name}.p12 -password pass:${STORE_PASSWORD}
     
-    cp "${name}.key" "${output_name}.key"
+    if [ "$name" != "$output_name" ]; then
+        cp "${name}.key" "${output_name}.key"
+    fi
 
     # Convert to JKS/truststore for Kafka/Zookeeper (if keytool is available)
     if command -v keytool &>/dev/null; then

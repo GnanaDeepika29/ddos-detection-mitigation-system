@@ -2,14 +2,18 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /app
 
-# Install build deps
+# Base builder stage - build tools + base deps
+COPY requirements/base.txt .
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefer-binary -r base.txt
+
+# Shared base builder - installs base.txt deps
 
 FROM python:3.11-slim AS runtime
 
@@ -24,24 +28,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
+COPY --from=builder /usr/local /usr/local
 
 # Create dirs
 RUN mkdir -p /app/{src,scripts,config,data,logs,models} && \
+    addgroup --gid 1000 ddos && \
+    adduser --uid 1000 --ingroup ddos --disabled-password --gecos "" ddos && \
+    chown -R ddos:ddos /app && \
     chmod +x /app
+USER ddos
 
 # Add to PATH
-ENV PATH=/root/.local/bin:$PATH
+ENV PATH=/usr/local/bin:${PATH}
 
 EXPOSE 8000
 
-LABEL maintainer="ddos-system@local" \
+ARG IMAGE_TAG=latest
+LABEL org.opencontainers.image.version="${IMAGE_TAG}" \
+      org.opencontainers.image.created="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      org.opencontainers.image.authors="ddos-system@local" \
       version="1.0" \
       description="DDoS System Base Image"
 
 # Generic healthcheck - override in service Dockerfiles
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD true || exit 1
+    CMD pgrep -u ddos python || exit 1
 
 CMD ["sleep", "infinity"]
 

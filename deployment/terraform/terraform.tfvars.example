@@ -1,0 +1,21 @@
+# Terraform variables for AWS DDoS System
+# Copy to terraform.tfvars and customize
+
+cluster_name = "ddos-eks-prod"
+allowed_mgmt_cidrs = ["YOUR_IP/32"]  # SSH/EC2 access
+
+# AWS
+aws_region     = "us-east-1"
+aws_account_id = "123456789012"
+
+# EKS
+eks_version = "1.28"
+
+# MSK Kafka
+msk_kafka_version = "3.5.1"
+msk_client_subnets = ["10.0.1.0/24", "10.0.2.0/24"]  # From VPC
+
+# Scale
+eks_node_min_size = 2
+eks_node_max_size = 10
+eks_node_instance_types = ["c5.large", "c5.xlarge"]

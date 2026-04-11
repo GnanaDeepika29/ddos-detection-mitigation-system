@@ -124,10 +124,13 @@ class SecurityAuditor:
             'weak_passwords': self.check_password_strength(),
         }
     
-    def auto_fix(self):
+import logging
+logger = logging.getLogger(__name__)
+
+def auto_fix(self):
         """Auto-fix common security issues"""
         if not self.env_path.exists():
-            print(f"Error: {self.env_path} not found")
+            logger.error(f"Error: {self.env_path} not found")
             return False
         
         # Generate new secrets
@@ -166,7 +169,7 @@ class SecurityAuditor:
             print("✅ Auto-fixed security issues")
             return True
         else:
-            print("No security issues auto-fixed")
+            logger.info("No security issues auto-fixed")
             return False
 
 def main():

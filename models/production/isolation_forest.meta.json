@@ -1,0 +1,25 @@
+{
+  "model_type": "isolation_forest",
+  "feature_names": [
+    "unique_src_ips",
+    "entropy_src_ip",
+    "tcp_ratio",
+    "udp_ratio",
+    "icmp_ratio",
+    "avg_packet_size",
+    "syn_ratio"
+  ],
+  "training_stats": {
+    "anomaly_scores": {
+      "mean": 0.5368949923582002,
+      "std": 0.047492043181536894,
+      "min": 0.4648894360104082,
+      "max": 0.6157174302705014,
+      "p95_threshold": 0.6018454317632691
+    }
+  },
+  "config": {
+    "model_type": "isolation_forest"
+  },
+  "timestamp": "2026-04-05T10:50:02.866537"
+}

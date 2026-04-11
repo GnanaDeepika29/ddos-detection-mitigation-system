@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.streaming.consumer import FlowConsumer, ConsumerConfig
 from src.mitigation.rule_injector import RuleInjector, RuleInjectorConfig
-from src.mitigation.rate_limiter import RateLimiter, RateLimiterConfig
+from src.mitigation.rate_limiter import DistributedRateLimiter, RateLimiterConfig
 from src.mitigation.cloud_shield import CloudShield, CloudShieldConfig, CloudProvider, create_cloud_shield
 from src.monitoring.metrics_exporter import MetricsExporter, MetricsConfig
 from src.utils.logger import setup_logging
@@ -43,10 +43,14 @@ class MitigationService:
             default_ttl_seconds=int(os.environ.get("BLACKLIST_DURATION_SECONDS", 3600)),
         ))
         
-        self.rate_limiter = RateLimiter(RateLimiterConfig(
-            default_packet_rate=int(os.environ.get("RATE_LIMIT_PPS", 1000)),
-            enable_auto_rules=os.environ.get("AUTO_MITIGATE", "false").lower() == "true",
-        ))
+        self.rate_limiter = DistributedRateLimiter(
+            RateLimiterConfig(
+                default_packet_rate=int(os.environ.get("RATE_LIMIT_PPS", 1000)),
+                enable_auto_rules=os.environ.get("AUTO_MITIGATE", "false").lower() == "true",
+            ),
+            redis_host=os.environ.get("REDIS_HOST", "localhost"),
+            redis_port=int(os.environ.get("REDIS_PORT", 6379)),
+        )
         
         cloud_config = CloudShieldConfig(
             provider=CloudProvider(os.environ.get("CLOUD_PROVIDER", "none").lower()),

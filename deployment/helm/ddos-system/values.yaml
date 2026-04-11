@@ -1,0 +1,214 @@
+# Dynamic Helm values - populated by deploy-cloud.sh from .env
+deployment:
+  enabled: true
+
+deployments:
+  collector:
+    replicas: 1
+    port: 9092
+    resources:
+      requests:
+        cpu: 1
+        memory: 2Gi
+      limits:
+        cpu: 4
+        memory: 8Gi
+    env:
+      - name: COLLECTOR_MODE
+        value: "interface"
+    securityContext:
+      privileged: true
+      capabilities:
+        add: ["NET_ADMIN", "NET_RAW"]
+    volumes:
+      - name: dev
+        hostPath:
+          path: /dev
+  detector:
+    replicas: 2
+    port: 9091
+    resources:
+      requests:
+        cpu: 2
+        memory: 4Gi
+      limits:
+        cpu: 8
+        memory: 16Gi
+    env:
+      - name: METRICS_PORT
+        value: "9091"
+      - name: KAFKA_TOPIC_FLOWS
+        value: "network_flows_prod"
+    volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: ddos-models-pvc
+  api:
+    replicas: 2
+    port: 8000
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi
+    env:
+      - name: API_PORT
+        value: "8000"
+      - name: AUTO_MITIGATE
+        value: "true"
+  mitigation:
+    replicas: 1
+    port: 8001
+    resources:
+      requests:
+        cpu: "500m"
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 4Gi
+    privileged: true
+
+services:
+  api:
+    type: LoadBalancer
+    port: 80
+    targetPort: 8000
+  detector:
+    type: ClusterIP
+    port: 9091
+    targetPort: 9091
+  collector:
+    type: ClusterIP
+    port: 9092
+    targetPort: 9092
+  mitigation:
+    type: ClusterIP
+    port: 8001
+    targetPort: 8001
+
+serviceAccounts:
+  detector:
+    annotations:
+      eks.amazonaws.com/role-arn: {{ .Values.irsa.detectorRoleArn }}
+
+irsa:
+  detectorRoleArn: "arn:aws:iam::ACCOUNT:role/ddos-detector-sa-role"
+
+pvc:
+  models:
+    storage: 50Gi
+    storageClass: gp3
+
+rbac:
+  enabled: true
+
+image:
+  repository: "ddos-system"  # overridden by ecrRepo
+  tag: "latest"  # overridden by imageTag
+  pullPolicy: Always
+  pullSecrets:
+    - name: ecr-secret
+
+ecrRepo: {{ .Values.global.ecrRepository | quote }}
+imageTag: {{ .Values.global.imageTag | default .Chart.AppVersion | quote }}
+
+service:
+  type: ClusterIP
+  port: 80
+
+secrets:
+  ssm:
+    api_key: "/ddos/api-key"
+    kafka_truststore: "/ddos/kafka-truststore"
+    redis_password: "/ddos/redis-password"
+    ml_model_path: "/ddos/models/xgboost"
+
+global:
+  ecrRepository: "AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/ddos-system"
+  imageTag: "latest"
+  aws:
+    accountId: "AWS_ACCOUNT_ID"
+    region: "AWS_REGION"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+  - host: api.ddos-protection.example.com
+    paths:
+    - path: /
+      pathType: Prefix
+  tls:
+  - secretName: ddos-tls
+    hosts:
+    - api.ddos-protection.example.com
+
+externalSecrets:
+  enabled: true
+  secretStore: "aws-ssm-store"
+  # All .env vars via SSM paths defined in .env.template
+
+kafka:
+  bootstrapServers: "kafka.ddos-system:9092"
+  topics:
+    flows: "network_flows_prod"
+    alerts: "ddos_alerts_prod"
+
+redis:
+  host: "redis.ddos-system"
+
+detection:
+  modelPath: "/models/xgboost_cic_fresh.pkl"  # From auto-train
+  thresholdPps: 50000
+
+mitigation:
+  dryRun: false
+  autoMitigate: true
+
+resources:
+  collector:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      cpu: 4
+      memory: 8Gi
+  detector:
+    requests:
+      cpu: 2
+      memory: 4Gi
+    limits:
+      cpu: 8
+      memory: 16Gi
+  api:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+  mitigation:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+autoscaling:
+  enabled: true
+  detector:
+    minReplicas: 2
+    maxReplicas: 10
+    cpuTarget: 70
+    memoryTarget: 80
+
+monitoring:
+  prometheus: true
+  grafana: true
+
+storageClass:
+  pvc: "gp3"
+

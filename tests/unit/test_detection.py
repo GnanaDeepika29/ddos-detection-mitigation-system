@@ -268,8 +268,7 @@ class TestThresholdDetector:
         features.entropy_src_ip = 0.3   # normalised [0,1] — low → suspicious
 
         # FIX BUG-19: field renamed from history_entropy to _entropy_baseline.
-        for _ in range(9):
-            self.detector._entropy_baseline.append(0.8)
+        self.detector._entropy_baseline = [0.8] * 10
 
         alert = self.detector.detect_entropy_anomaly(features, time.time())
         assert alert is not None

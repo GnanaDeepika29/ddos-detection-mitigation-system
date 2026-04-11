@@ -20,12 +20,12 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FeatureConfig:
     """Configuration for feature extraction"""
-    max_flows_per_window: int = 10_000
-    max_unique_ips: int = 1_000
+    max_flows_per_window: int = 5_000
+    max_unique_ips: int = 500
     enable_payload_analysis: bool = False
     enable_dns_features: bool = False
     enable_tcp_flags: bool = True
-    window_sizes: List[int] = field(default_factory=lambda: [1, 5, 10, 60])
+    window_sizes: List[int] = field(default_factory=lambda: [5, 60])
     feature_normalization: bool = True
 
 
@@ -207,7 +207,7 @@ class FeatureExtractor:
 
     def __init__(self, config: Optional[FeatureConfig] = None) -> None:
         self.config = config or FeatureConfig()
-        self.feature_history: deque = deque(maxlen=1_000)
+        self.feature_history: deque = deque(maxlen=500)
         self.flow_features_cache: Dict[str, FlowFeatures] = {}
         logger.info("FeatureExtractor initialised")
 

@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AppConfig:
-    """Main application configuration."""
+    """Main application configuration - memory-optimized defaults."""
 
     environment: str = "development"
     debug: bool = False
@@ -42,9 +42,7 @@ class AppConfig:
     port: int = 8000
 
     detection_window_seconds: int = 5
-    # FIX BUG-7: Default aligned with thresholds.yaml (50 000) and prod.yaml.
-    # The old default of 10 000 caused false positives on untuned deployments.
-    detection_pps_threshold: int = 50_000   # was 10_000
+    detection_pps_threshold: int = 50_000
     detection_bps_threshold: int = 100_000_000
     detection_entropy_threshold: float = 0.7
 
@@ -52,11 +50,13 @@ class AppConfig:
     kafka_topic_flows: str = "network_flows"
     kafka_topic_alerts: str = "ddos_alerts"
     kafka_consumer_group: str = "ddos-detection-group"
+    kafka_max_batch_size: int = 100
 
     redis_host: str = "localhost"
     redis_port: int = 6379
     redis_password: str = ""
     redis_db: int = 0
+    redis_max_connections: int = 50
 
     cloud_provider: str = "none"
     cloud_region: str = "us-east-1"
@@ -69,6 +69,11 @@ class AppConfig:
 
     alert_min_severity: str = "medium"
     alert_cooldown_seconds: int = 30
+
+    max_flows_in_memory: int = 5000
+    max_alerts_history: int = 5000
+    aggregation_window_size: int = 60
+    cleanup_interval_seconds: int = 60
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

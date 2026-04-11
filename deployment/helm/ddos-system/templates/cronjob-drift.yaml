@@ -1,0 +1,52 @@
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-ml-drift-check
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: ddos-detector-sa
+          containers:
+          - name: drift-check
+            image: {{ include "ecr.registry" . }}/ddos-detector:{{ .Values.image.tag | default "latest" }}
+            command:
+            - /bin/sh
+            - -c
+            - |
+              python -m src.ml.drift_detection --check-only --threshold 0.05 &&
+              if [ $? -eq 1 ]; then
+                python -m src.ml.drift_detection --retrain --upload-s3 &&
+                kubectl rollout restart deployment {{ include "ddos-system.fullname" . }}-detector
+              fi
+            env:
+            - name: ML_DRIFT_THRESHOLD
+              value: "0.05"
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                cpu: 1000m
+                memory: 2Gi
+            volumeMounts:
+            - name: models
+              mountPath: /models
+          volumes:
+          - name: models
+            persistentVolumeClaim:
+              claimName: ddos-models-pvc
+          restartPolicy: OnFailure
+          nodeSelector:
+            node-type: main
+          tolerations:
+          - key: "node-type"
+            operator: "Equal"
+            value: "main"
+            effect: "NoSchedule"
+

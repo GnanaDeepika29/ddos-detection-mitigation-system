@@ -1,0 +1,34 @@
+{
+  "model_type": "xgboost",
+  "feature_names": [
+    "total_packets",
+    "total_bytes",
+    "total_flows",
+    "packets_per_second",
+    "bytes_per_second",
+    "flows_per_second",
+    "unique_src_ips",
+    "unique_dst_ips",
+    "entropy_src_ip",
+    "entropy_dst_ip",
+    "tcp_ratio",
+    "udp_ratio",
+    "icmp_ratio",
+    "avg_packet_size",
+    "syn_ratio",
+    "rst_ratio"
+  ],
+  "training_stats": {
+    "metrics": {
+      "accuracy": 0.999537144179588,
+      "precision": 0.9995332555425904,
+      "recall": 1.0,
+      "f1_score": 0.9997665732959851,
+      "roc_auc": 0.9999692787888469
+    }
+  },
+  "config": {
+    "model_type": "xgboost"
+  },
+  "timestamp": "2026-04-08T17:40:51.940695"
+}

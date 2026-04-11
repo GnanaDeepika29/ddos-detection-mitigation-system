@@ -36,6 +36,7 @@ class RuleAction(Enum):
     REJECT = "REJECT"
     ACCEPT = "ACCEPT"
     LIMIT = "LIMIT"
+    TARPIT = "TARPIT"
 
 
 @dataclass
@@ -80,6 +81,16 @@ class FirewallRule:
             if self.destination_port:
                 base += ["--dport", str(self.destination_port)]
 
+        if self.action == RuleAction.TARPIT:
+            # TARPIT is a specific target in iptables
+            base += ["-j", "TARPIT"]
+            return [base]
+
+        if self.action == RuleAction.TARPIT:
+            # TARPIT is a specific target in iptables
+            base += ["-j", "TARPIT"]
+            return [base]
+
         if self.limit_rate:
             allow = list(base) + ["-m", "limit", "--limit", self.limit_rate]
             if self.limit_burst:
@@ -99,7 +110,7 @@ class FirewallRule:
         its handle number.  Without '--echo', nft produces no output and the
         regex `r'# handle (\\d+)'` in add_rule() always returns None, leaving
         nft_handle = None.  A missing handle means _remove_rule_unlocked()
-        always fails with 'No nft handle for rule {id}' → rules accumulate
+        always fails with 'No nft handle for rule {id}' - rules accumulate
         and are never removed.
         """
         if self.source_ip:
@@ -126,6 +137,26 @@ class FirewallRule:
             parts += ["limit", f"rate {rate_value}"]
             if self.limit_burst:
                 parts += ["burst", str(self.limit_burst)]
+
+        if self.action == RuleAction.TARPIT:
+            # nftables doesn't have a built-in TARPIT equivalent.
+            # We can simulate it by accepting the connection and then
+            # setting a very low window size to stall it.
+            # This is more complex and better handled by custom nft sets/maps.
+            # For now, we will log a warning and fall back to DROP.
+            logger.warning("TARPIT action not directly supported in nftables, falling back to DROP")
+            parts.append("drop")
+            return [parts]
+
+        if self.action == RuleAction.TARPIT:
+            # nftables doesn't have a built-in TARPIT equivalent.
+            # We can simulate it by accepting the connection and then
+            # setting a very low window size to stall it.
+            # This is more complex and better handled by custom nft sets/maps.
+            # For now, we will log a warning and fall back to DROP.
+            logger.warning("TARPIT action not directly supported in nftables, falling back to DROP")
+            parts.append("drop")
+            return [parts]
 
         parts.append(self.action.value.lower())
         return [parts]

@@ -51,7 +51,7 @@ class CollectorService:
         self.flow_builder = FlowBuilder(
             idle_timeout=int(os.environ.get("FLOW_IDLE_TIMEOUT", 30)),
             active_timeout=int(os.environ.get("FLOW_ACTIVE_TIMEOUT", 60)),
-            max_flows=int(os.environ.get("MAX_FLOWS", 100000)),
+            max_flows=int(os.environ.get("MAX_FLOWS", 5000)),
         )
         
         producer_config = ProducerConfig(
@@ -204,11 +204,11 @@ def main():
     """Main entry point"""
     parser = argparse.ArgumentParser(description="DDoS Flow Collector")
     parser.add_argument("--interface", "-i", default=os.environ.get("COLLECTOR_INTERFACE", "eth0"),
-                       help="Network interface to capture from")
-    parser.add_argument("--synthetic", action="store_true",
-                       help="Use synthetic traffic generation")
+                        help="Network interface to capture from")
+    parser.add_argument("--synthetic", "-s", action="store_true",
+                        help="Use synthetic traffic generation")
     parser.add_argument("--log-level", default=os.environ.get("LOG_LEVEL", "INFO"),
-                       help="Log level")
+                        help="Log level")
     
     args = parser.parse_args()
     

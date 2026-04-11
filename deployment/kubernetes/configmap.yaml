@@ -13,7 +13,11 @@ data:
   KAFKA_TOPIC_FLOWS: "network_flows_prod"
   KAFKA_TOPIC_ALERTS: "ddos_alerts_prod"
   REDIS_HOST: "redis-headless.ddos-system"
-  ML_MODEL_PATH_ISOLATION_FOREST: "/models/isolation_forest.pkl"
+  ML_MODEL_PATH_XGBOOST: "/models/xgboost_cic.pkl"
+  ML_MODEL_TYPE: "xgboost"
+  AWS_REGION: "us-east-1"
+  CLUSTER_ISSUER: "letsencrypt-prod"
+  CLOUD_PROVIDER: "aws"
   app.yaml: |
     app:
       name: "ddos-protection-system"

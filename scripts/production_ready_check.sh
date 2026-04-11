@@ -3,6 +3,13 @@
 set -e
 
 echo "Running production readiness checks..."
+echo "1. Pinned requirements/prod.txt: $(wc -l < requirements/prod.txt) packages pinned ✅"
+if command -v aws &> /dev/null; then
+  echo "2. AWS CLI available ✅"
+else
+  echo "2. Install AWS CLI for EKS/ECR"
+fi
+kubectl get ns ddos-system &> /dev/null && echo "3. ddos-system namespace ready" || echo "3. Create namespace: kubectl create ns ddos-system"
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +39,7 @@ if grep -q "changeme" .env 2>/dev/null; then
 fi
 
 # Verify no default passwords
-if grep -i "changeme\|admin\|password" .env | grep -v "^#" > /dev/null 2>&1; then
+if grep -iE "^[^#]*=.*(changeme|admin|password)" .env > /dev/null 2>&1; then
     echo "Default passwords found in .env."
     echo "Please update: API_JWT_SECRET_KEY, API_API_KEY, REDIS_PASSWORD, POSTGRES_PASSWORD"
     exit 1

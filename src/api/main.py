@@ -36,7 +36,7 @@ except ImportError:
 
 from src.streaming.producer import FlowProducer, ProducerConfig
 from src.mitigation.cloud_shield import CloudProvider, CloudShieldConfig, create_cloud_shield
-from src.mitigation.rate_limiter import RateLimiter, RateLimiterConfig
+from src.mitigation.rate_limiter import DistributedRateLimiter, RateLimiterConfig
 from src.mitigation.rule_injector import RuleInjector, RuleInjectorConfig
 
 # FIX BUG-37 / BUG-42: Wrap MetricsExporter import so the API starts
@@ -152,7 +152,7 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown events."""
     if not logging.root.handlers:
         log_level = getattr(
-            logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO
+            logging, os.environ.get("LOG_LEVEL", "WARNING").upper(), logging.WARNING
         )
         logging.basicConfig(
             level=log_level,
@@ -174,6 +174,11 @@ async def lifespan(app: FastAPI):
     else:
         app.state.metrics_exporter = _NullMetricsExporter()
 
+    # Store maximums (memory-friendly)
+    max_history = 1000
+    max_flows = 5000
+    max_actions = 500
+
     app.state.alert_producer = FlowProducer(ProducerConfig(
         bootstrap_servers=os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"),
         topic_alerts=os.environ.get("KAFKA_TOPIC_ALERTS", "ddos_alerts"),
@@ -184,10 +189,14 @@ async def lifespan(app: FastAPI):
         require_sudo=False,
         default_ttl_seconds=int(os.environ.get("BLACKLIST_DURATION_SECONDS", 3600)),
     ))
-    app.state.rate_limiter = RateLimiter(RateLimiterConfig(
-        default_packet_rate=int(os.environ.get("RATE_LIMIT_PPS", 1000)),
-        enable_auto_rules=os.environ.get("AUTO_MITIGATE", "false").lower() == "true",
-    ))
+    app.state.rate_limiter = DistributedRateLimiter(
+        RateLimiterConfig(
+            default_packet_rate=int(os.environ.get("RATE_LIMIT_PPS", 1000)),
+            enable_auto_rules=os.environ.get("AUTO_MITIGATE", "false").lower() == "true",
+        ),
+        redis_host=os.environ.get("REDIS_HOST", "localhost"),
+        redis_port=int(os.environ.get("REDIS_PORT", 6379)),
+    )
     app.state.cloud_shield = create_cloud_shield(CloudShieldConfig(
         provider=CloudProvider(os.environ.get("CLOUD_PROVIDER", "none").lower()),
         auto_enable=os.environ.get("AUTO_MITIGATE", "false").lower() == "true",
@@ -195,6 +204,10 @@ async def lifespan(app: FastAPI):
     app.state.mitigation_actions = []
     app.state.flow_records = []
     app.state.alert_history = []
+
+    # Memory-friendly: limit stored records
+    max_history = 1000
+    max_flows = 5000
 
     yield
 
@@ -235,13 +248,11 @@ app = FastAPI(
     version=VERSION,
     description="Health and control plane for the CloudShield DDoS stack.",
     lifespan=lifespan,
-    docs_url="/docs" if os.environ.get("ENVIRONMENT") != "production" else None,
-    redoc_url="/redoc" if os.environ.get("ENVIRONMENT") != "production" else None,
+    docs_url=None,
+    redoc_url=None,
 )
 
-cors_origins = os.environ.get(
-    "API_CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080"
-).split(",")
+cors_origins = os.environ.get("API_CORS_ALLOWED_ORIGINS", "*").split(",") if os.environ.get("ENVIRONMENT", "production") == "development" else []
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -587,6 +598,6 @@ if __name__ == "__main__":
         "src.api.main:app",
         host=os.environ.get("API_HOST", "0.0.0.0"),
         port=int(os.environ.get("API_PORT", 8000)),
-        reload=os.environ.get("API_RELOAD", "false").lower() == "true",
+        reload=os.environ.get("API_RELOAD", "false").lower() == "true" if os.environ.get("ENVIRONMENT", "production") != "production" else False,
         log_level=os.environ.get("LOG_LEVEL", "info").lower(),
     )

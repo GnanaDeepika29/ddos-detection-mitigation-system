@@ -83,11 +83,8 @@ class EnsembleDetector:
         self.threshold_detector = threshold_detector or ThresholdDetector()
         self.ml_detector = ml_detector
         self.feature_extractor = FeatureExtractor()
-        self.alert_history: deque = deque(maxlen=1_000)
-        # FIX BUG-7: Use a deque instead of a plain list to avoid rebuilding
-        # the entire sequence on every _check_throttle() call.  maxlen caps
-        # memory automatically and makes the sliding-window O(1).
-        self.alert_timestamps: deque = deque(maxlen=self.config.max_alerts_per_minute * 2)
+        self.alert_history: deque = deque(maxlen=500)
+        self.alert_timestamps: deque = deque(maxlen=min(self.config.max_alerts_per_minute * 2, 200))
         self.stats: Dict[str, Any] = {
             'total_evaluations': 0,
             'alerts_raised': 0,

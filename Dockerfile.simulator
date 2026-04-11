@@ -1,4 +1,34 @@
-FROM Dockerfile.base AS runtime
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements/base.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefer-binary -r requirements/base.txt
+
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+# Install runtime deps (shared across services)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local /usr/local
+
+# Add to PATH
+ENV PATH=/usr/local/bin:${PATH}
 
 # Simulator-specific - no extra deps needed
 
@@ -14,6 +44,9 @@ HEALTHCHECK NONE
 # Create entrypoint script
 RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/simulate_traffic.py "$$@"\n' > /entrypoint.sh && \
     chmod +x /entrypoint.sh
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
 
 ENTRYPOINT ["/entrypoint.sh"]
 

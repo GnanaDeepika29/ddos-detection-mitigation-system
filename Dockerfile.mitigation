@@ -1,7 +1,36 @@
-FROM Dockerfile.base AS runtime
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+# Install build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements/base.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefer-binary -r requirements/base.txt
+
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+
+# Install runtime deps (shared across services)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local /usr/local
+
+# Add to PATH
+ENV PATH=/usr/local/bin:${PATH}
 
 # Mitigation-specific runtime deps
-USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nftables \
     iproute2 \
@@ -14,6 +43,13 @@ COPY scripts/ /app/scripts/
 COPY config/ /app/config/
 COPY models/ /app/models/
 
+# Switch to non-root
+RUN addgroup --gid 1000 ddos && \
+    adduser --uid 1000 --ingroup ddos --disabled-password --gecos "" ddos && \
+    chown -R ddos:ddos /app && \
+    chmod 755 /entrypoint.sh
+USER ddos
+
 # Mitigation-specific healthcheck
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD pgrep -f 'run_mitigation.py' || exit 1
@@ -24,6 +60,9 @@ RUN mkdir -p /app/logs /app/data
 # Create entrypoint script
 RUN printf '#!/bin/bash\nset -e\nexec python /app/scripts/run_mitigation.py "$$@"\n' > /entrypoint.sh && \
     chmod +x /entrypoint.sh
+
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
 
 ENTRYPOINT ["/entrypoint.sh"]
 

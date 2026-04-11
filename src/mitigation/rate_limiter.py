@@ -1,16 +1,12 @@
 """
-Rate Limiter Module
-
-Implements rate limiting for DDoS mitigation using:
-- Token bucket algorithm
-- Sliding window counters
-- Per-IP, per-subnet, per-protocol limiting
-- Distributed limiting via Redis
+Distributed rate limiting for DDoS mitigation.
 """
 
 import ipaddress
+import random
 import time
 import threading
+from abc import ABC, abstractmethod
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from enum import Enum
@@ -25,6 +21,12 @@ class LimitType(Enum):
     BYTE = "byte"
     CONNECTION = "connection"
     BANDWIDTH = "bandwidth"
+
+
+class RateLimiterAlgorithm(Enum):
+    TOKEN_BUCKET = "token_bucket"
+    FIXED_WINDOW = "fixed_window"
+    SLIDING_WINDOW_LOG = "sliding_window_log"
 
 
 @dataclass
@@ -132,7 +134,7 @@ class RateLimiterConfig:
     default_connection_rate: int = 100
     default_burst_multiplier: float = 2.0
     enable_auto_rules: bool = True
-    max_rules: int = 10_000
+    max_rules: int = 5_000
     rule_cleanup_interval: int = 60
     use_sliding_window: bool = True
 
@@ -157,13 +159,11 @@ class RateLimiter:
         }
 
         self._lock = threading.RLock()
-        # FIX BUG-7: counter protected exclusively inside _lock; _generate_rule_id
-        # is always called while the lock is held so no separate atomic needed.
         self._rule_counter = 0
         self._last_cleanup = time.time()
-        # FIX BUG-12: Use threading.Event for interruptible sleep so stop()
-        # returns promptly instead of waiting up to rule_cleanup_interval seconds.
         self._stop_event = threading.Event()
+        self._max_buckets = 2000
+        self._max_windows = 2000
 
         self._cleanup_thread = threading.Thread(
             target=self._cleanup_loop, daemon=True, name="rate-limiter-cleanup"
@@ -242,7 +242,7 @@ class RateLimiter:
             logger.debug(f"Cleaned up {len(expired)} expired rate limit rules")
 
     def _cleanup_loop(self) -> None:
-        """Background cleanup — uses Event.wait() so stop() is responsive."""
+        """Background cleanup - uses Event.wait() so stop() is responsive."""
         while not self._stop_event.wait(timeout=self.config.rule_cleanup_interval):
             # FIX BUG-12: Event.wait(timeout) returns True if stop was signalled
             # (exits loop immediately) or False on timeout (runs cleanup).
@@ -262,7 +262,7 @@ class RateLimiter:
 
         FIX BUG-10: The original iterated self.rules.values() without holding
         _lock.  A concurrent add_rule() or _cleanup_loop could mutate the dict
-        mid-iteration → RuntimeError.  Now iterates a shallow copy so the lock
+        mid-iteration to RuntimeError.  Now iterates a shallow copy so the lock
         is not held for the entire (potentially slow) bucket/window check.
         """
         with self._lock:
@@ -427,20 +427,103 @@ class RateLimiter:
         }
 
 
-class DistributedRateLimiter(RateLimiter):
-    """Distributed rate limiter using Redis for cross-instance coordination."""
+# ==================================================================
+# Distributed Rate Limiting Backends
+# ==================================================================
+
+class RateLimitingBackend(ABC):
+    """Abstract base class for distributed rate limiting backends."""
+
+    @abstractmethod
+    def check_rate_limit(
+        self, key: str, limit: int, window_seconds: int, algorithm: "RateLimiterAlgorithm"
+    ) -> bool:
+        """
+        Checks if a request is allowed under the given rate limit.
+        Returns True if the request is allowed, False otherwise.
+        """
+        pass
+
+    def connect(self, **kwargs) -> None:
+        """Optional connection method."""
+        pass
+
+    def disconnect(self) -> None:
+        """Optional disconnection method."""
+        pass
+
+
+class MemoryBackend(RateLimitingBackend):
+    """
+    In-memory backend for testing or single-node use.
+    Not suitable for a distributed environment.
+    """
+    def __init__(self):
+        self.windows = defaultdict(lambda: deque())
+        self.fixed_counters = defaultdict(lambda: (0, 0)) # (count, expiry_timestamp)
+        self._lock = threading.Lock()
+
+    def check_rate_limit(
+        self, key: str, limit: int, window_seconds: int, algorithm: "RateLimiterAlgorithm"
+    ) -> bool:
+        if algorithm == RateLimiterAlgorithm.FIXED_WINDOW:
+            return self._check_fixed_window(key, limit, window_seconds)
+        if algorithm == RateLimiterAlgorithm.SLIDING_WINDOW_LOG:
+            return self._check_sliding_window_log(key, limit, window_seconds)
+        logger.warning(f"MemoryBackend does not support algorithm: {algorithm}")
+        return True
+
+    def _check_fixed_window(self, key: str, limit: int, window_seconds: int) -> bool:
+        with self._lock:
+            now = time.time()
+            count, expiry = self.fixed_counters[key]
+
+            if now > expiry:
+                self.fixed_counters[key] = (1, now + window_seconds)
+                return True
+            
+            if count < limit:
+                self.fixed_counters[key] = (count + 1, expiry)
+                return True
+            
+            return False
+
+    def _check_sliding_window_log(self, key: str, limit: int, window_seconds: int) -> bool:
+        with self._lock:
+            now = time.time()
+            window = self.windows[key]
+            cutoff = now - window_seconds
+            
+            while window and window[0] < cutoff:
+                window.popleft()
+            
+            if len(window) < limit:
+                window.append(now)
+                return True
+            
+            return False
+
+
+class RedisBackend(RateLimitingBackend):
+    """Distributed rate limiting backend using Redis."""
+
+    # Lua script: atomic INCR + conditional EXPIRE in a single round-trip.
+    _INCR_EXPIRE_SCRIPT = """
+    local current = redis.call('INCR', KEYS[1])
+    if current == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    return current
+    """
 
     def __init__(
         self,
-        config: RateLimiterConfig,
         redis_host: str = "localhost",
         redis_port: int = 6379,
         redis_password: Optional[str] = None,
-    ) -> None:
-        super().__init__(config)
+    ):
         self.redis_client: Any = None
         self._init_redis(redis_host, redis_port, redis_password)
-        logger.info("DistributedRateLimiter initialised with Redis backend")
 
     def _init_redis(self, host: str, port: int, password: Optional[str]) -> None:
         try:
@@ -454,21 +537,86 @@ class DistributedRateLimiter(RateLimiter):
                 socket_connect_timeout=5,
             )
             self.redis_client.ping()
-            logger.info("Redis connection established")
+            logger.info("RedisBackend: Redis connection established")
         except ImportError:
-            logger.error("redis package not installed, falling back to local rate limiting")
+            logger.error("RedisBackend: 'redis' package not installed. This backend is unusable.")
+            self.redis_client = None
         except Exception as exc:
-            logger.error(f"Failed to connect to Redis: {exc}")
+            logger.error(f"RedisBackend: Failed to connect to Redis: {exc}")
+            self.redis_client = None
 
-    # Lua script: atomic INCR + conditional EXPIRE in a single round-trip.
-    # Returns the new counter value as a string.
-    _INCR_EXPIRE_SCRIPT = """
-local current = redis.call('INCR', KEYS[1])
-if current == 1 then
-    redis.call('EXPIRE', KEYS[1], ARGV[1])
-end
-return current
-"""
+    def check_rate_limit(
+        self, key: str, limit: int, window_seconds: int, algorithm: "RateLimiterAlgorithm"
+    ) -> bool:
+        if not self.redis_client:
+            logger.warning("RedisBackend not connected, failing open.")
+            return True
+
+        if algorithm == RateLimiterAlgorithm.FIXED_WINDOW:
+            return self._check_fixed_window(key, limit, window_seconds)
+        if algorithm == RateLimiterAlgorithm.SLIDING_WINDOW_LOG:
+            return self._check_sliding_window_log(key, limit, window_seconds)
+        
+        logger.warning(f"RedisBackend does not support algorithm: {algorithm}")
+        return True
+
+    def _check_fixed_window(self, key: str, limit: int, window_seconds: int) -> bool:
+        try:
+            current = self.redis_client.eval(
+                self._INCR_EXPIRE_SCRIPT,
+                1,
+                key,
+                window_seconds,
+            )
+            return int(current) <= limit
+        except Exception as exc:
+            logger.error(f"Redis fixed window check failed: {exc}")
+            return True   # fail open
+
+    def _check_sliding_window_log(self, key: str, limit: int, window_seconds: int) -> bool:
+        try:
+            now = time.time()
+            
+            pipeline = self.redis_client.pipeline()
+            pipeline.zremrangebyscore(key, 0, now - window_seconds)
+            pipeline.zadd(key, {f"{now}-{random.random()}": now})
+            pipeline.zcard(key)
+            pipeline.expire(key, window_seconds)
+            results = pipeline.execute()
+
+            current_count = results[2]
+            return current_count <= limit
+        except Exception as exc:
+            logger.error(f"Redis Sliding Window Log check failed: {exc}")
+            return True  # Fail open
+
+
+class DistributedRateLimiter(RateLimiter):
+    """
+    Distributed rate limiter using a pluggable backend for cross-instance coordination.
+    This class maintains backward compatibility by creating a RedisBackend by default.
+    For more flexibility, you can instantiate a backend and pass it to the constructor.
+    """
+
+    def __init__(
+        self,
+        config: RateLimiterConfig,
+        backend: Optional[RateLimitingBackend] = None,
+        # The following are for backward compatibility / direct Redis instantiation
+        redis_host: str = "localhost",
+        redis_port: int = 6379,
+        redis_password: Optional[str] = None,
+    ) -> None:
+        super().__init__(config)
+        if backend:
+            self.backend = backend
+        else:
+            self.backend = RedisBackend(
+                redis_host=redis_host,
+                redis_port=redis_port,
+                redis_password=redis_password,
+            )
+        logger.info(f"DistributedRateLimiter initialised with backend: {self.backend.__class__.__name__}")
 
     def check_rate_limit_distributed(
         self,
@@ -476,36 +624,32 @@ return current
         limit_key: str,
         limit_value: int,
         window_seconds: int = 1,
+        algorithm: "RateLimiterAlgorithm" = RateLimiterAlgorithm.FIXED_WINDOW,
     ) -> bool:
         """
-        Check rate limit using Redis.
-
-        FIX BUG-9: The original code issued INCR and EXPIRE as two separate
-        commands.  If the process crashed between them, the key would persist
-        forever with no TTL, permanently rate-limiting the IP.  Now uses a
-        Lua script that executes INCR and (on first increment) EXPIRE
-        atomically in a single Redis round-trip.
+        Check rate limit using the configured distributed backend.
         """
-        if not self.redis_client:
-            return super().check_rate_limit(ip, 1, 0, None, None)
+        if not self.backend:
+            logger.warning("No distributed backend configured, rate limit check is ineffective.")
+            return True # Fail open
 
         try:
             key = f"rate_limit:{limit_key}:{ip}"
-            # FIX BUG-9: atomic Lua script
-            current = self.redis_client.eval(
-                self._INCR_EXPIRE_SCRIPT,
-                1,          # num keys
-                key,        # KEYS[1]
-                window_seconds,  # ARGV[1]
+            
+            allowed = self.backend.check_rate_limit(
+                key=key,
+                limit=limit_value,
+                window_seconds=window_seconds,
+                algorithm=algorithm
             )
 
-            if int(current) > limit_value:
+            if allowed:
+                self.stats['packets_allowed'] += 1
+            else:
                 self.stats['packets_limited'] += 1
-                return False
-
-            self.stats['packets_allowed'] += 1
-            return True
+            
+            return allowed
 
         except Exception as exc:
-            logger.error(f"Redis rate limit check failed: {exc}")
+            logger.error(f"Distributed rate limit check failed with backend: {exc}")
             return True   # fail open

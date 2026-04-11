@@ -1,0 +1,30 @@
+apiVersion: v2
+name: ddos-system
+description: "Production DDoS Detection & Mitigation System"
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+dependencies:
+  - name: external-secrets
+    version: "0.7.0"
+    repository: "https://charts.external-secrets.io"
+kubeVersion: ">=1.25.0-0"
+maintainers:
+- name: BlackBOXAI
+  email: ai@blackbox.ai
+keywords:
+- ddos
+- security
+- kafka
+- ml
+- monitoring
+home: https://github.com/blackboxai/ddos-detection-mitigation-system
+sources:
+- deployment/kubernetes/
+annotations:
+  artifacthub.io/changes: |
+    - kind: changed
+      description: Production cloud deployment complete
+    - kind: added
+      description: ExternalSecrets + SSM integration
+

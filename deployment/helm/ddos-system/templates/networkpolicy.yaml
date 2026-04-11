@@ -1,0 +1,161 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-default-deny
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-collector-egress
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: collector
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: kafka
+      namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9092
+    - protocol: TCP
+      port: 9094  # TLS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-streaming-ingress
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: streaming
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: collector
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: detector
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-detector-egress
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: detector
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/component: mitigation
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus scrape
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-mitigation-egress
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: mitigation
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0  # Cloud APIs (AWS Shield, firewalls)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-api-ingress
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - ipBlock:
+        cidr: 0.0.0.0/0  # External API access
+      ports:
+      - protocol: TCP
+        port: {{ include "service.port" . }}
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+---
+# Allow Prometheus to scrape all service metrics
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ddos-system.fullname" . }}-allow-prometheus
+  labels:
+    {{- include "ddos-system.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+    ports:
+    - protocol: TCP
+      port: 8000  # /metrics endpoint
+    - protocol: TCP
+      port: 8080
+

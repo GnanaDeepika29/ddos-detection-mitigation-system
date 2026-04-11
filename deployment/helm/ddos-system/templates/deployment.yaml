@@ -1,0 +1,40 @@
+{{- if .Values.deployment.enabled -}}
+{{- range $name, $config := .Values.deployments }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/instance: {{ $config.name | default $name }}
+spec:
+  replicas: {{ $config.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+    spec:
+      serviceAccountName: {{ $name }}-sa
+      containers:
+      - name: {{ $name }}
+        image: "{{ $.Values.image.repository }}/{{ $name }}:{{ $.Values.image.tag | default "latest" }}"
+        ports:
+        - containerPort: {{ $config.port | default 8080 }}
+        env:
+        {{- if $config.env }}
+        {{- toYaml $config.env | nindent 8 }}
+        {{- end }}
+        resources:
+          {{- toYaml $config.resources | default $.Values.resources[$name] | nindent 10 }}
+        {{- if $config.securityContext }}
+        securityContext:
+          {{- toYaml $config.securityContext | nindent 10 }}
+        {{- end }}
+{{- end }}
+{{- end }}
+
