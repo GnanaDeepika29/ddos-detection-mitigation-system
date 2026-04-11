@@ -349,7 +349,9 @@ class ThresholdDetector:
         current_time = time.time()
         alerts: List[ThresholdAlert] = []
 
-        if features.window_size < self.config.min_window_seconds:
+        # Support both dict and feature object
+        window_size = getattr(features, 'window_size', None) or features.get('window_size', 60)
+        if window_size < self.config.min_window_seconds:
             return alerts
 
         # FIX BUG-25: detect_volumetric now returns a list (PPS + BPS).
